@@ -36,6 +36,7 @@
           - ufw
           - fail2ban
           - crowdsec
+          - crowdsec-firewall-bouncer-iptables
         state: present
 
     - name: Install CrowdSec collections (Linux & SSHD)

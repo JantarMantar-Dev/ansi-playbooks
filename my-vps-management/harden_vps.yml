@@ -1,0 +1,146 @@
+---
+- name: Harden and Prepare VPS
+  hosts: all
+  become: yes
+  vars:
+    # We assume the public key is named similarly to the private key defined in inventory
+    local_public_key: "~/.ssh/ssdnode-2025.pub"
+    target_user: jbaba
+
+  tasks:
+    - name: Update and upgrade all packages
+      apt:
+        upgrade: dist
+        update_cache: yes
+
+    - name: Install prerequisites
+      apt:
+        name:
+          - curl
+          - gnupg
+        state: present
+
+    - name: Install RClone
+      apt:
+        name: rclone
+        state: present
+
+    - name: Add CrowdSec repository
+      shell: curl -s https://install.crowdsec.net | sh
+
+    - name: Install security tools
+      apt:
+        name:
+          - ufw
+          - fail2ban
+          - crowdsec
+        state: present
+
+    - name: Install CrowdSec collections (Linux & SSHD)
+      command: cscli collections install {{ item }}
+      loop:
+        - crowdsecurity/linux
+        - crowdsecurity/sshd
+      register: cscli_install
+      changed_when: "'up-to-date' not in cscli_install.stdout"
+      ignore_errors: yes
+
+    - name: Reload CrowdSec to apply changes
+      service:
+        name: crowdsec
+        state: reloaded
+
+    - name: Add Docker GPG apt Key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker Repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_facts['distribution_release'] }} stable"
+        state: present
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Add user to Docker group
+      user:
+        name: "{{ target_user }}"
+        groups: docker
+        append: yes
+
+    - name: Configure UFW (Firewall) - Allow SSH
+      ufw:
+        rule: allow
+        port: '22'
+        proto: tcp
+
+    - name: Configure UFW - Allow HTTP/HTTPS
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: ['80', '443']
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+
+    - name: Create user "{{ target_user }}" with sudo privileges
+      user:
+        name: "{{ target_user }}"
+        groups: sudo
+        shell: /bin/bash
+        append: yes
+        state: present
+
+    - name: Create data directory for apps
+      file:
+        path: /data
+        state: directory
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0775'
+
+    - name: Set up authorized keys for {{ target_user }}
+      authorized_key:
+        user: "{{ target_user }}"
+        state: present
+        key: "{{ lookup('file', local_public_key) }}"
+
+    - name: Set up authorized keys for root (Emergency Access)
+      authorized_key:
+        user: root
+        state: present
+        key: "{{ lookup('file', local_public_key) }}"
+
+    - name: Allow passwordless sudo for {{ target_user }}
+      copy:
+        dest: /etc/sudoers.d/{{ target_user }}
+        content: "{{ target_user }} ALL=(ALL) NOPASSWD:ALL"
+        mode: '0440'
+        validate: 'visudo -cf %s'
+
+    - name: Disable Root Password Login & Enforce Key Auth
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin prohibit-password' }
+        - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication no' }
+      notify: Restart SSH
+
+  handlers:
+    - name: Restart SSH
+      service:
+        name: ssh
+        state: restarted

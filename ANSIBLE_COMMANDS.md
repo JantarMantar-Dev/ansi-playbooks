@@ -24,7 +24,21 @@ ansible-playbook -i inventory.ini harden_vps.yml
 ansible-playbook -i inventory.ini docker-swarm-test.yml
 ```
 
-## 4. Ad-Hoc Commands
+## 4. Zot Registry Deployment
+**Goal**: Deploy the Zot registry to the Swarm.
+**Directory**: `zot`
+```bash
+ansible-playbook -i inventory.ini setup_zot.yml
+```
+
+## 5. Set Docker Prod Swarm
+**Goal**: Deploy the production stack to the Swarm.
+**Directory**: `prod-docker`
+```bash
+ansible-playbook -i inventory.ini setup-swarm.yml
+```
+
+## 6. Ad-Hoc Commands
 **Ping all servers**:
 ```bash
 ansible -i my-vps-management/inventory.ini all -m ping

@@ -1,0 +1,58 @@
+---
+- name: Setup Zot Registry
+  hosts: ssdnodes-626ed0c31a5d3
+  become: true
+  vars_prompt:
+    - name: zot_username
+      prompt: "Enter Zot Username"
+      default: "zotuser"
+      private: false
+
+    - name: zot_password
+      prompt: "Enter Zot Password"
+      private: true
+
+  tasks:
+    - name: Install required packages for htpasswd
+      apt:
+        name: python3-passlib
+        state: present
+        update_cache: yes
+
+    - name: Create Zot directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+      loop:
+        - /data/zot
+        - /data/zot/data
+
+    - name: Remove config.json directory if it exists (Docker auto-creation fix)
+      file:
+        path: /data/zot/config.json
+        state: absent
+
+    - name: Remove htpasswd directory if it exists (Docker auto-creation fix)
+      file:
+        path: /data/zot/htpasswd
+        state: absent
+
+    - name: Upload config.json
+      copy:
+        src: config.json
+        dest: /data/zot/config.json
+        mode: '0644'
+        owner: root
+        group: root
+
+    - name: Create htpasswd file
+      htpasswd:
+        path: /data/zot/htpasswd
+        name: "{{ zot_username }}"
+        password: "{{ zot_password }}"
+        owner: root
+        group: root
+        mode: '0640'

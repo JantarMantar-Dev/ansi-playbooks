@@ -1,0 +1,13 @@
+---
+- name: Setup SSH Keys for Racknerd Nodes
+  hosts: racknerd
+  gather_facts: yes
+  vars:
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+  
+  tasks:
+    - name: Set up authorized key
+      authorized_key:
+        user: root
+        state: present
+        key: "{{ lookup('file', '~/.ssh/ssdnode-2025.pub') }}"

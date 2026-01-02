@@ -27,6 +27,8 @@
 
     - name: Add CrowdSec repository
       shell: curl -s https://install.crowdsec.net | sh
+      args:
+        creates: /etc/apt/sources.list.d/crowdsec_crowdsec.list
 
     - name: Install security tools
       apt:

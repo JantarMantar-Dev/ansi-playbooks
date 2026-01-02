@@ -1,0 +1,188 @@
+---
+- name: Setup Docker and Swarm
+  hosts: servers
+  become: yes
+  gather_facts: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install dependencies
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3-pip
+          - python3-docker
+        state: present
+
+    - name: Implement Docker installation check
+      command: docker --version
+      register: docker_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Add Docker official GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+      when: docker_check.failed
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+      when: docker_check.failed
+
+    - name: Install Docker CE
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: present
+      when: docker_check.failed
+
+    - name: Allow Swarm Management Port (Manager Only)
+      ufw:
+        rule: allow
+        port: '2377'
+        proto: tcp
+      when: "'swarm_managers' in group_names"
+
+    - name: Allow Swarm Communication Ports (TCP)
+      ufw:
+        rule: allow
+        port: '7946'
+        proto: tcp
+
+    - name: Allow Swarm Communication Ports (UDP)
+      ufw:
+        rule: allow
+        port: '7946'
+        proto: udp
+
+    - name: Allow Overlay Network Traffic
+      ufw:
+        rule: allow
+        port: '4789'
+        proto: udp
+
+    - name: Ensure Docker is running
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+- name: Initialize Swarm Manager
+  hosts: swarm_managers
+  become: yes
+  tasks:
+    - name: Initialize the swarm
+      community.docker.docker_swarm:
+        state: present
+        advertise_addr: "{{ ansible_host }}"
+      register: swarm_info
+
+    - name: Get worker join token
+      set_fact:
+        worker_join_token: "{{ swarm_info.swarm_facts.JoinTokens.Worker }}"
+      when: swarm_info.changed
+      
+    - name: Get worker join token (if not changed)
+      command: docker swarm join-token -q worker
+      register: worker_token_cmd
+      changed_when: false
+      when: not swarm_info.changed
+
+    - name: Set worker join token fact (if not changed)
+      set_fact:
+        worker_join_token: "{{ worker_token_cmd.stdout }}"
+      when: not swarm_info.changed
+
+    - name: Debug Manager Token
+      debug:
+        msg: "Worker Join Token: {{ worker_join_token }}"
+
+- name: Join Swarm Workers
+  hosts: swarm_workers
+  become: yes
+  tasks:
+    - name: Join the swarm
+      community.docker.docker_swarm:
+        state: join
+        advertise_addr: "{{ ansible_host }}"
+        join_token: "{{ hostvars[groups['swarm_managers'][0]]['worker_join_token'] }}"
+        remote_addrs: 
+          - "{{ hostvars[groups['swarm_managers'][0]]['ansible_host'] }}:2377"
+
+- name: Deploy Services
+  hosts: swarm_managers
+  become: yes
+  run_once: true
+  tasks:
+    - name: Copy Docker Compose file
+      copy:
+        src: docker-compose.yml
+        dest: /home/{{ ansible_user }}/docker-compose.yml
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+
+    - name: Deploy Docker Stack
+      command: docker stack deploy -c /home/{{ ansible_user }}/docker-compose.yml test_stack
+      register: stack_deploy
+      changed_when: "'Creating' in stack_deploy.stdout or 'Updating' in stack_deploy.stdout"
+
+    - name: Wait for services to stabilize
+      pause:
+        seconds: 60
+
+    - name: Debug - List Stack Services
+      command: docker stack services test_stack
+      register: stack_services
+      changed_when: false
+
+    - name: Show Stack Services
+      debug:
+        var: stack_services.stdout_lines
+
+    - name: Debug - List Stack Tasks
+      command: docker stack ps test_stack --no-trunc
+      register: stack_tasks
+      changed_when: false
+
+    - name: Show Stack Tasks
+      debug:
+        var: stack_tasks.stdout_lines
+
+    - name: Verify application response (HTTPS)
+      uri:
+        url: "https://{{ ansible_host }}"
+        headers:
+          Host: "test.jbaba.dev"
+        validate_certs: no
+        return_content: yes
+        status_code: 200
+      register: result
+      retries: 20
+      delay: 5
+      until: result.status == 200
+      ignore_errors: true
+
+    - name: Show verification result
+      debug:
+        msg: 
+          - "Verification Result: {{ 'SUCCESS' if result.status == 200 else 'FAILURE' }}"
+          - "Status Code: {{ result.status }}"
+          - "Content Preview: {{ result.content[:200] if result.content is defined else 'No Content' }}"
+
+    - name: Fail if verification failed
+      fail:
+        msg: "Failed to verify test.jbaba.dev routing over HTTPS"
+      when: result.status != 200

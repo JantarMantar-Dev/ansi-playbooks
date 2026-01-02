@@ -1,0 +1,148 @@
+---
+- name: Setup Docker and Swarm
+  hosts: servers
+  become: yes
+  gather_facts: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install dependencies
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3-pip
+          - python3-docker
+        state: present
+
+    - name: Implement Docker installation check
+      command: docker --version
+      register: docker_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Add Docker official GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+      when: docker_check.failed
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+      when: docker_check.failed
+
+    - name: Install Docker CE
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: present
+      when: docker_check.failed
+
+    - name: Allow Swarm Management Port (Manager Only)
+      ufw:
+        rule: allow
+        port: '2377'
+        proto: tcp
+      when: "'swarm_managers' in group_names"
+
+    - name: Allow Swarm Communication Ports (TCP)
+      ufw:
+        rule: allow
+        port: '7946'
+        proto: tcp
+
+    - name: Allow Swarm Communication Ports (UDP)
+      ufw:
+        rule: allow
+        port: '7946'
+        proto: udp
+
+    - name: Allow Overlay Network Traffic
+      ufw:
+        rule: allow
+        port: '4789'
+        proto: udp
+
+    - name: Ensure Docker is running
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+- name: Initialize Swarm Master
+  hosts: swarm_managers[0]
+  become: yes
+  tasks:
+    - name: Initialize the swarm
+      community.docker.docker_swarm:
+        state: present
+        advertise_addr: "{{ ansible_host }}"
+      register: swarm_info
+
+    - name: Get worker join token
+      set_fact:
+        worker_join_token: "{{ swarm_info.swarm_facts.JoinTokens.Worker }}"
+      when: swarm_info.changed
+
+    - name: Get manager join token
+      set_fact:
+        manager_join_token: "{{ swarm_info.swarm_facts.JoinTokens.Manager }}"
+      when: swarm_info.changed
+
+    - name: Get worker join token (if not changed)
+      command: docker swarm join-token -q worker
+      register: worker_token_cmd
+      changed_when: false
+      when: not swarm_info.changed
+
+    - name: Get manager join token (if not changed)
+      command: docker swarm join-token -q manager
+      register: manager_token_cmd
+      changed_when: false
+      when: not swarm_info.changed
+
+    - name: Set join token facts (if not changed)
+      set_fact:
+        worker_join_token: "{{ worker_token_cmd.stdout }}"
+        manager_join_token: "{{ manager_token_cmd.stdout }}"
+      when: not swarm_info.changed
+
+    - name: Debug Tokens
+      debug:
+        msg: 
+          - "Worker Token: {{ worker_join_token }}"
+          - "Manager Token: {{ manager_join_token }}"
+
+- name: Join Secondary Swarm Managers
+  hosts: swarm_managers:!swarm_managers[0]
+  become: yes
+  tasks:
+    - name: Join the swarm as manager
+      community.docker.docker_swarm:
+        state: join
+        advertise_addr: "{{ ansible_host }}"
+        join_token: "{{ hostvars[groups['swarm_managers'][0]]['manager_join_token'] }}"
+        remote_addrs: 
+          - "{{ hostvars[groups['swarm_managers'][0]]['ansible_host'] }}:2377"
+
+- name: Join Swarm Workers
+  hosts: swarm_workers
+  become: yes
+  tasks:
+    - name: Join the swarm as worker
+      community.docker.docker_swarm:
+        state: join
+        advertise_addr: "{{ ansible_host }}"
+        join_token: "{{ hostvars[groups['swarm_managers'][0]]['worker_join_token'] }}"
+        remote_addrs: 
+          - "{{ hostvars[groups['swarm_managers'][0]]['ansible_host'] }}:2377"

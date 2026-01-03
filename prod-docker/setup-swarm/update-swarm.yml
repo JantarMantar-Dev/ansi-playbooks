@@ -125,6 +125,20 @@
           - "{{ join_man.stderr_lines | default(['No error']) }}"
       when: join_man is changed
 
+    - name: "RECOVERY: Force Leave if Already Swarm Member (Manager)"
+      command: docker swarm leave --force
+      when: 
+        - join_man.failed is defined
+        - join_man.failed
+        - "'This node is already part of a swarm' in join_man.stderr"
+      register: leave_recovery_man
+
+    - name: "RECOVERY: Retry Join as Manager"
+      command: "docker swarm join --token {{ join_token_manager }} {{ join_addr_manager }}"
+      when: 
+        - leave_recovery_man is changed
+      register: retry_join_man
+
     - name: "ACTION: Join as Worker"
       command: "docker swarm join --token {{ join_token_worker }} {{ join_addr_manager }}"
       when: 
@@ -140,6 +154,20 @@
           - "{{ join_work.stdout_lines | default(['No output']) }}"
           - "{{ join_work.stderr_lines | default(['No error']) }}"
       when: join_work is changed
+
+    - name: "RECOVERY: Force Leave if Already Swarm Member (Worker)"
+      command: docker swarm leave --force
+      when: 
+        - join_work.failed is defined
+        - join_work.failed
+        - "'This node is already part of a swarm' in join_work.stderr"
+      register: leave_recovery_work
+
+    - name: "RECOVERY: Retry Join as Worker"
+      command: "docker swarm join --token {{ join_token_worker }} {{ join_addr_manager }}"
+      when: 
+        - leave_recovery_work is changed
+      register: retry_join_work
 
 - name: "Phase 4: Cleanup Ghost Nodes"
   hosts: swarm_managers

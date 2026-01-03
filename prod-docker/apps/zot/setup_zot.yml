@@ -15,7 +15,7 @@
   tasks:
     - name: Install required packages for htpasswd
       apt:
-        name: python3-passlib
+        name: apache2-utils
         state: present
         update_cache: yes
 
@@ -49,10 +49,14 @@
         group: root
 
     - name: Create htpasswd file
-      htpasswd:
+      shell: "htpasswd -b -B -c /data/zot/htpasswd {{ zot_username }} {{ zot_password }}"
+      args:
+        creates: /data/zot/htpasswd
+      become: true
+
+    - name: Set permissions on htpasswd file
+      file:
         path: /data/zot/htpasswd
-        name: "{{ zot_username }}"
-        password: "{{ zot_password }}"
         owner: root
         group: root
         mode: '0640'

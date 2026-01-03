@@ -72,24 +72,32 @@
       changed_when: false
 
     - name: "CHECK: Verify Advertise/Manager Address"
-      shell: "docker info 2>/dev/null | grep -E 'Advertise|Manager Address'"
-      register: address_check
+      shell: "docker info --format '{{'{{'}}.Swarm.RemoteManagers{{'}}'}}'"
+      register: remote_managers_json
       changed_when: false
       failed_when: false
       check_mode: no
+
+    # Check if RemoteManagers contains the docker0 default (172.17.0.1) OR if it doesn't contain our ansible_host (for Leader)
+    - name: "CHECK: Evaluate Address Mismatch"
+      set_fact:
+        advertise_addr_mismatch: "{{ '172.17.0.1' in remote_managers_json.stdout or (inventory_hostname == leader_host and ansible_host not in remote_managers_json.stdout) }}"
+      when: remote_managers_json.rc == 0
 
     - name: "DECIDE: Determine Action"
       set_fact:
         start_action: >-
           {% if leader_host == '' %}
             ABORT_NO_LEADER
+          {% elif inventory_hostname == leader_host and advertise_addr_mismatch | default(false) %}
+            REPAIR_LEADER
           {% elif inventory_hostname == leader_host %}
             LEADER_SKIP
           {% elif force_swarm_reinit | default(false) | bool %}
             REPAIR
           {% elif local_status.stdout != 'active' %}
             JOIN
-          {% elif address_check.rc != 0 %}
+          {% elif advertise_addr_mismatch | default(false) %}
             REPAIR
           {% elif inventory_hostname not in known_active_nodes %}
             REPAIR
@@ -102,7 +110,8 @@
         msg: 
           - "Node: {{ inventory_hostname }}"
           - "Status: {{ local_status.stdout }}"
-          - "Address Check RC: {{ address_check.rc }} (0=OK, 1=Fail)"
+          - "Current Advertise Addr (RemoteManagers): {{ remote_managers_json.stdout | default('Unknown') }}"
+          - "Address Mismatch: {{ advertise_addr_mismatch | default(false) }}"
           - "Force Reinit: {{ force_swarm_reinit | default(false) }}"
           - "Action: {{ start_action | trim }}"
 
@@ -110,6 +119,19 @@
       fail:
         msg: "No healthy Swarm Leader found in inventory! Cannot proceed with repairs."
       when: (start_action | trim) == 'ABORT_NO_LEADER'
+
+    - name: "REPAIR: Force Re-Init Leader"
+      command: "docker swarm init --force-new-cluster --advertise-addr {{ ansible_host }}"
+      when: (start_action | trim) == 'REPAIR_LEADER'
+      register: reinit_res
+
+    - name: "LOG: Re-Init Output"
+      debug:
+        msg:
+          - "{{ inventory_hostname }} > docker swarm init --force-new-cluster"
+          - "{{ reinit_res.stdout_lines | default(['No output']) }}"
+          - "{{ reinit_res.stderr_lines | default(['No error']) }}"
+      when: reinit_res is changed
 
     - name: "REPAIR: Force Leave Broken/Phantom Node"
       command: docker swarm leave --force
@@ -216,12 +238,23 @@
   hosts: all
   become: yes
   gather_facts: no
+  vars:
+    leader_host: "{{ groups['swarm_managers'] | map('extract', hostvars) | selectattr('swarm_leader_host', 'defined') | map(attribute='inventory_hostname') | first | default('') }}"
   tasks:
     - name: "VERIFY: Check Address Advertisement"
-      shell: "docker info 2>/dev/null | grep -E 'Advertise|Manager Address'"
+      shell: "docker info --format '{{'{{'}}.Swarm.RemoteManagers{{'}}'}}'"
       register: verify_address
       ignore_errors: yes
       changed_when: false
+
+    - name: "VERIFY: Compare Address"
+      assert:
+        that:
+          - "'172.17.0.1' not in verify_address.stdout"
+          - "hostvars[leader_host]['ansible_host'] in verify_address.stdout"
+        fail_msg: "Address mismatch! Advertised: {{ verify_address.stdout }} Expected to contain: {{ hostvars[leader_host]['ansible_host'] }}"
+        success_msg: "Address match validated: {{ verify_address.stdout }}"
+      ignore_errors: yes
 
     - name: "LOG: Verification Result"
       debug:

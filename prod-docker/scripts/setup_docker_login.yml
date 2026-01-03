@@ -1,0 +1,38 @@
+---
+- name: Setup Docker Registry Login
+  hosts: all
+  become: true
+  gather_facts: false
+  vars_prompt:
+    - name: registry_url
+      prompt: "Enter the registry URL (e.g. registry.example.com)"
+      private: false
+      
+    - name: registry_password
+      prompt: "Enter the registry password"
+      private: true
+
+  tasks:
+    - name: Log into Docker Registry
+      community.docker.docker_login:
+        registry_url: "{{ registry_url }}"
+        username: zotuser
+        password: "{{ registry_password }}"
+        reauthorize: true
+      register: login_result
+
+    - name: Verify Docker Login
+      debug:
+        msg: "Successfully logged into {{ registry_url }} as zotuser"
+      when: login_result is succeeded
+
+    - name: Confirm Login Config Exists
+      shell: "grep -F '{{ registry_url }}' ~/.docker/config.json"
+      register: config_check
+      changed_when: false
+      failed_when: config_check.rc != 0
+      
+    - name: Show Config Verification
+      debug:
+        msg: "Verified auth entry for {{ registry_url }} exists in ~/.docker/config.json"
+      when: config_check.rc == 0

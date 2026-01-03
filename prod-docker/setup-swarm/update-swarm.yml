@@ -80,19 +80,6 @@
       register: local_status
       changed_when: false
 
-    - name: "CHECK: Verify Advertise/Manager Address"
-      shell: "docker info --format '{{'{{'}}.Swarm.RemoteManagers{{'}}'}}'"
-      register: remote_managers_json
-      changed_when: false
-      failed_when: false
-      check_mode: no
-
-    # Check if RemoteManagers contains the docker0 default (172.17.0.1) OR if it doesn't contain our ansible_host (for Leader)
-    - name: "CHECK: Evaluate Address Mismatch"
-      set_fact:
-        advertise_addr_mismatch: "{{ '172.17.0.1' in remote_managers_json.stdout or (inventory_hostname == leader_host and ansible_host not in remote_managers_json.stdout) }}"
-      when: remote_managers_json.rc == 0
-
     - name: "CHECK: Get Tailscale IP"
       shell: "ip -4 addr show tailscale0 | awk '/inet / {print $2}' | cut -d/ -f1"
       register: tailscale_ip
@@ -112,6 +99,19 @@
     - name: "FACT: Set Advertise Address"
       set_fact:
         swarm_advertise_addr: "{{ tailscale_ip.stdout if (use_tailscale | default(false) | bool and tailscale_ip.rc == 0 and tailscale_ip.stdout != '') else ansible_host }}"
+
+    - name: "CHECK: Verify Advertise/Manager Address"
+      shell: "docker info --format '{{'{{'}}.Swarm.RemoteManagers{{'}}'}}'"
+      register: remote_managers_json
+      changed_when: false
+      failed_when: false
+      check_mode: no
+
+    # Use swarm_advertise_addr for comparison to catch Tailscale vs Public mismatches
+    - name: "CHECK: Evaluate Address Mismatch"
+      set_fact:
+        advertise_addr_mismatch: "{{ '172.17.0.1' in remote_managers_json.stdout or (swarm_advertise_addr not in remote_managers_json.stdout) }}"
+      when: remote_managers_json.rc == 0
 
     - name: "DECIDE: Determine Action"
       set_fact:

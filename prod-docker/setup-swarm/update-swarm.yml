@@ -152,7 +152,7 @@
       when: (start_action | trim) == 'ABORT_NO_LEADER'
 
     - name: "REPAIR: Force Re-Init Leader"
-      command: "docker swarm init --force-new-cluster --advertise-addr {{ swarm_advertise_addr }}"
+      command: "docker swarm init --force-new-cluster --advertise-addr {{ swarm_advertise_addr }} --listen-addr {{ swarm_advertise_addr }}:2377"
       when: (start_action | trim) == 'REPAIR_LEADER'
       register: reinit_res
 
@@ -179,7 +179,7 @@
       when: (start_action | trim) == 'REPAIR'
 
     - name: "ACTION: Join as Manager"
-      command: "docker swarm join --token {{ join_token_manager }} --advertise-addr {{ swarm_advertise_addr }} {{ join_addr_manager }}"
+      command: "docker swarm join --token {{ join_token_manager }} --advertise-addr {{ swarm_advertise_addr }} --listen-addr {{ swarm_advertise_addr }}:2377 {{ join_addr_manager }}"
       when: 
         - "'swarm_managers' in group_names"
         - ((start_action | trim) == 'JOIN') or ((start_action | trim) == 'REPAIR')
@@ -203,7 +203,7 @@
       register: leave_recovery_man
 
     - name: "RECOVERY: Retry Join as Manager"
-      command: "docker swarm join --token {{ join_token_manager }} --advertise-addr {{ swarm_advertise_addr }} {{ join_addr_manager }}"
+      command: "docker swarm join --token {{ join_token_manager }} --advertise-addr {{ swarm_advertise_addr }} --listen-addr {{ swarm_advertise_addr }}:2377 {{ join_addr_manager }}"
       when: 
         - leave_recovery_man is changed
       register: retry_join_man

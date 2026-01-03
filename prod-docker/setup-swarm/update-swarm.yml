@@ -47,11 +47,20 @@
       when: is_leader | default(false)
       changed_when: false
 
+    - name: "CHECK: Get Leader Tailscale IP"
+      shell: "ip -4 addr show tailscale0 | awk '/inet / {print $2}' | cut -d/ -f1"
+      register: leader_tailscale_ip
+      when: 
+        - is_leader | default(false)
+        - use_tailscale | default(false) | bool
+      changed_when: false
+      failed_when: false
+
     - name: "FACT: Parse Tokens"
       set_fact:
         manager_token: "{{ swarm_tokens.stdout_lines[0].split(':')[1] }}"
         worker_token: "{{ swarm_tokens.stdout_lines[1].split(':')[1] }}"
-        leader_ip: "{{ ansible_host }}"
+        leader_ip: "{{ leader_tailscale_ip.stdout if (use_tailscale | default(false) | bool and leader_tailscale_ip.rc == 0 and leader_tailscale_ip.stdout != '') else ansible_host }}"
       when: is_leader | default(false)
 
 - name: "Phase 2 & 3: Node Evaluation & Repair"
@@ -83,6 +92,26 @@
       set_fact:
         advertise_addr_mismatch: "{{ '172.17.0.1' in remote_managers_json.stdout or (inventory_hostname == leader_host and ansible_host not in remote_managers_json.stdout) }}"
       when: remote_managers_json.rc == 0
+
+    - name: "CHECK: Get Tailscale IP"
+      shell: "ip -4 addr show tailscale0 | awk '/inet / {print $2}' | cut -d/ -f1"
+      register: tailscale_ip
+      when: use_tailscale | default(false) | bool
+      changed_when: false
+      failed_when: false
+
+    - name: "FAIL: Missing Tailscale IP"
+      fail:
+        msg: "SKIPPING: Tailscale requested but no IP found on tailscale0 for {{ inventory_hostname }}"
+      when: 
+        - use_tailscale | default(false) | bool
+        - tailscale_ip.stdout == ""
+      ignore_errors: yes
+      register: tailscale_check
+
+    - name: "FACT: Set Advertise Address"
+      set_fact:
+        swarm_advertise_addr: "{{ tailscale_ip.stdout if (use_tailscale | default(false) | bool and tailscale_ip.rc == 0 and tailscale_ip.stdout != '') else ansible_host }}"
 
     - name: "DECIDE: Determine Action"
       set_fact:
@@ -123,7 +152,7 @@
       when: (start_action | trim) == 'ABORT_NO_LEADER'
 
     - name: "REPAIR: Force Re-Init Leader"
-      command: "docker swarm init --force-new-cluster --advertise-addr {{ ansible_host }}"
+      command: "docker swarm init --force-new-cluster --advertise-addr {{ swarm_advertise_addr }}"
       when: (start_action | trim) == 'REPAIR_LEADER'
       register: reinit_res
 
@@ -150,7 +179,7 @@
       when: (start_action | trim) == 'REPAIR'
 
     - name: "ACTION: Join as Manager"
-      command: "docker swarm join --token {{ join_token_manager }} {{ join_addr_manager }}"
+      command: "docker swarm join --token {{ join_token_manager }} --advertise-addr {{ swarm_advertise_addr }} {{ join_addr_manager }}"
       when: 
         - "'swarm_managers' in group_names"
         - ((start_action | trim) == 'JOIN') or ((start_action | trim) == 'REPAIR')
@@ -174,13 +203,13 @@
       register: leave_recovery_man
 
     - name: "RECOVERY: Retry Join as Manager"
-      command: "docker swarm join --token {{ join_token_manager }} {{ join_addr_manager }}"
+      command: "docker swarm join --token {{ join_token_manager }} --advertise-addr {{ swarm_advertise_addr }} {{ join_addr_manager }}"
       when: 
         - leave_recovery_man is changed
       register: retry_join_man
 
     - name: "ACTION: Join as Worker"
-      command: "docker swarm join --token {{ join_token_worker }} {{ join_addr_manager }}"
+      command: "docker swarm join --token {{ join_token_worker }} --advertise-addr {{ swarm_advertise_addr }} {{ join_addr_manager }}"
       when: 
         - "'swarm_workers' in group_names"
         - ((start_action | trim) == 'JOIN') or ((start_action | trim) == 'REPAIR')
@@ -204,7 +233,7 @@
       register: leave_recovery_work
 
     - name: "RECOVERY: Retry Join as Worker"
-      command: "docker swarm join --token {{ join_token_worker }} {{ join_addr_manager }}"
+      command: "docker swarm join --token {{ join_token_worker }} --advertise-addr {{ swarm_advertise_addr }} {{ join_addr_manager }}"
       when: 
         - leave_recovery_work is changed
       register: retry_join_work
@@ -249,12 +278,21 @@
       ignore_errors: yes
       changed_when: false
 
+    - name: "FACT: Determine Expected Leader Address"
+      set_fact:
+        expected_leader_addr: >-
+          {{ 
+            hostvars[leader_host]['leader_tailscale_ip']['stdout'] 
+            if (use_tailscale | default(false) | bool and hostvars[leader_host]['leader_tailscale_ip'] is defined) 
+            else hostvars[leader_host]['ansible_host'] 
+          }}
+
     - name: "VERIFY: Compare Address"
       assert:
         that:
           - "'172.17.0.1' not in verify_address.stdout"
-          - "hostvars[leader_host]['ansible_host'] in verify_address.stdout"
-        fail_msg: "Address mismatch! Advertised: {{ verify_address.stdout }} Expected to contain: {{ hostvars[leader_host]['ansible_host'] }}"
+          - "expected_leader_addr in verify_address.stdout"
+        fail_msg: "Address mismatch! Advertised: {{ verify_address.stdout }} Expected to contain: {{ expected_leader_addr }}"
         success_msg: "Address match validated: {{ verify_address.stdout }}"
       ignore_errors: yes
 
@@ -284,4 +322,31 @@
           - "FINAL CLUSTER STATE (from {{ inventory_hostname }}):"
           - "{{ final_node_ls.stdout_lines }}"
       when: final_node_ls.rc == 0
+
+- name: "Phase 7: Detailed Summary Log"
+  hosts: all
+  become: yes
+  gather_facts: no
+  vars:
+    # Safely get facts from the identified leader (re-calculated to ensure access)
+    leader_host: "{{ groups['swarm_managers'] | map('extract', hostvars) | selectattr('swarm_leader_host', 'defined') | map(attribute='inventory_hostname') | first | default('') }}"
+    join_addr_manager: "{{ hostvars[leader_host]['leader_ip'] }}:2377"
+  tasks:
+    - name: "CHECK: Get Tailscale IP (Summary)"
+      shell: "ip -4 addr show tailscale0 | awk '/inet / {print $2}' | cut -d/ -f1"
+      register: summary_tailscale_ip
+      changed_when: false
+      failed_when: false
+
+    - name: "LOG: Detailed Node Status"
+      debug:
+        msg:
+          - "---------------------------------------------------"
+          - " Node: {{ inventory_hostname }}"
+          - " Public IP: {{ ansible_host }}"
+          - " Tailscale IP: {{ summary_tailscale_ip.stdout | default('Not Found') }}"
+          - " Worker Swarm Advertise Addr: {{ hostvars[inventory_hostname]['swarm_advertise_addr'] | default('N/A (Skipped/Failed)') }}"
+          - " Managers Address: {{ join_addr_manager }}"
+          - " Status: {{ 'SKIPPED (No Tailscale IP)' if (use_tailscale | default(false) | bool and summary_tailscale_ip.stdout == '') else 'PROCESSED' }}"
+          - "---------------------------------------------------"
 

@@ -20,6 +20,15 @@ Forces the LEADER node to re-initialize the swarm. This generates new join token
 ansible-playbook -i inventory.ini update-swarm.yml -e "force_leader_reinit=true"
 ```
 
+### Option: Use Tailscale IP
+To configure the **entire swarm** (Leader and Workers) to communicate over **Tailscale** (`tailscale0` interface):
+- **Leader**: Advertises Tailscale IP.
+- **Workers**: Join using Leader's Tailscale IP and advertise their own Tailscale IP.
+
+```bash
+ansible-playbook -i inventory.ini update-swarm.yml -e "force_leader_reinit=true" -e "use_tailscale=true"
+```
+
 ## 4. Verify Health Only
 (Although verify runs at the end of the playbook, you can run a dry-run or specific tag if we added tags, but currently just run the playbook).
 

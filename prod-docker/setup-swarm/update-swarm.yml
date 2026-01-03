@@ -71,6 +71,13 @@
       register: local_status
       changed_when: false
 
+    - name: "CHECK: Verify Advertise/Manager Address"
+      shell: "docker info 2>/dev/null | grep -E 'Advertise|Manager Address'"
+      register: address_check
+      changed_when: false
+      failed_when: false
+      check_mode: no
+
     - name: "DECIDE: Determine Action"
       set_fact:
         start_action: >-
@@ -78,8 +85,12 @@
             ABORT_NO_LEADER
           {% elif inventory_hostname == leader_host %}
             LEADER_SKIP
+          {% elif force_swarm_reinit | default(false) | bool %}
+            REPAIR
           {% elif local_status.stdout != 'active' %}
             JOIN
+          {% elif address_check.rc != 0 %}
+            REPAIR
           {% elif inventory_hostname not in known_active_nodes %}
             REPAIR
           {% else %}
@@ -88,7 +99,12 @@
 
     - name: "REPORT: Planned Action"
       debug:
-        msg: "Node {{ inventory_hostname }} status is {{ local_status.stdout }}. Action: {{ start_action | trim }}"
+        msg: 
+          - "Node: {{ inventory_hostname }}"
+          - "Status: {{ local_status.stdout }}"
+          - "Address Check RC: {{ address_check.rc }} (0=OK, 1=Fail)"
+          - "Force Reinit: {{ force_swarm_reinit | default(false) }}"
+          - "Action: {{ start_action | trim }}"
 
     - name: "FAIL: No Leader Found"
       fail:
@@ -197,6 +213,25 @@
         - item.changed
 
 - name: "Phase 5: Verification"
+  hosts: all
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: "VERIFY: Check Address Advertisement"
+      shell: "docker info 2>/dev/null | grep -E 'Advertise|Manager Address'"
+      register: verify_address
+      ignore_errors: yes
+      changed_when: false
+
+    - name: "LOG: Verification Result"
+      debug:
+        msg:
+          - "Node: {{ inventory_hostname }}"
+          - "Address Check: {{ 'PASSED' if verify_address.rc == 0 else 'FAILED' }}"
+          - "Output: {{ verify_address.stdout }}"
+      when: verify_address.rc is defined
+
+- name: "Phase 6: Cluster State"
   hosts: swarm_managers
   become: yes
   gather_facts: no

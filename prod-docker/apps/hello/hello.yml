@@ -1,0 +1,14 @@
+services:
+  hello:
+    image: nginxdemos/hello
+    restart: always
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+
+networks:
+  dokploy-network:
+    external: true

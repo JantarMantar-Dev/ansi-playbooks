@@ -151,15 +151,40 @@
         msg: "No healthy Swarm Leader found in inventory! Cannot proceed with repairs."
       when: (start_action | trim) == 'ABORT_NO_LEADER'
 
-    - name: "REPAIR: Force Re-Init Leader"
-      command: "docker swarm init --force-new-cluster --advertise-addr {{ swarm_advertise_addr }} --listen-addr {{ swarm_advertise_addr }}:2377"
+    - name: "REPAIR: Force Leave Leader"
+      command: docker swarm leave --force
+      when: (start_action | trim) == 'REPAIR_LEADER'
+      ignore_errors: yes
+
+    - name: "REPAIR: Init New Swarm"
+      command: "docker swarm init --advertise-addr {{ swarm_advertise_addr }} --listen-addr {{ swarm_advertise_addr }}:2377"
       when: (start_action | trim) == 'REPAIR_LEADER'
       register: reinit_res
+
+    - name: "FACT: Refresh Tokens after Reinit"
+      shell: |
+         echo "MANAGER:$(docker swarm join-token -q manager)"
+         echo "WORKER:$(docker swarm join-token -q worker)"
+      register: new_swarm_tokens
+      when: (start_action | trim) == 'REPAIR_LEADER'
+      changed_when: false
+
+    - name: "FACT: Update Token Vars"
+      set_fact:
+        manager_token: "{{ new_swarm_tokens.stdout_lines[0].split(':')[1] }}"
+        worker_token: "{{ new_swarm_tokens.stdout_lines[1].split(':')[1] }}"
+        join_token_manager: "{{ new_swarm_tokens.stdout_lines[0].split(':')[1] }}"
+        join_token_worker: "{{ new_swarm_tokens.stdout_lines[1].split(':')[1] }}"
+        leader_host: "{{ inventory_hostname }}"
+        join_addr_manager: "{{ swarm_advertise_addr }}:2377"
+      when: 
+        - (start_action | trim) == 'REPAIR_LEADER'
+        - new_swarm_tokens.rc == 0
 
     - name: "LOG: Re-Init Output"
       debug:
         msg:
-          - "{{ inventory_hostname }} > docker swarm init --force-new-cluster"
+          - "{{ inventory_hostname }} > docker swarm init (HARD RESET)"
           - "{{ reinit_res.stdout_lines | default(['No output']) }}"
           - "{{ reinit_res.stderr_lines | default(['No error']) }}"
       when: reinit_res is changed
@@ -278,6 +303,9 @@
       ignore_errors: yes
       changed_when: false
 
+
+
+
     - name: "FACT: Determine Expected Leader Address"
       set_fact:
         expected_leader_addr: >-
@@ -286,6 +314,11 @@
             if (use_tailscale | default(false) | bool and hostvars[leader_host]['leader_tailscale_ip'] is defined) 
             else hostvars[leader_host]['ansible_host'] 
           }}
+
+    - name: "WAIT: Allow Cluster Rumor Propagation"
+      pause:
+        seconds: 10
+      when: verify_address.rc == 0 and ('172.17.0.1' in verify_address.stdout or expected_leader_addr not in verify_address.stdout)
 
     - name: "VERIFY: Compare Address"
       assert:
@@ -338,6 +371,12 @@
       changed_when: false
       failed_when: false
 
+    - name: "CHECK: Get Docker Swarm Config"
+      shell: "docker info --format '{{'{{'}}.Swarm.NodeAddr{{'}}'}}|{{'{{'}}range .Swarm.RemoteManagers{{'}}'}}{{'{{'}}.Addr{{'}}'}} {{'{{'}}end{{'}}'}}'"
+      register: final_swarm_config
+      ignore_errors: yes
+      changed_when: false
+
     - name: "LOG: Detailed Node Status"
       debug:
         msg:
@@ -345,8 +384,8 @@
           - " Node: {{ inventory_hostname }}"
           - " Public IP: {{ ansible_host }}"
           - " Tailscale IP: {{ summary_tailscale_ip.stdout | default('Not Found') }}"
-          - " Worker Swarm Advertise Addr: {{ hostvars[inventory_hostname]['swarm_advertise_addr'] | default('N/A (Skipped/Failed)') }}"
-          - " Managers Address: {{ join_addr_manager }}"
+          - " Worker Swarm Advertise Addr: {{ final_swarm_config.stdout.split('|')[0] | default('Unknown') }}"
+          - " Managers Address: {{ final_swarm_config.stdout.split('|')[1] | default('Unknown') | trim }}"
           - " Status: {{ 'SKIPPED (No Tailscale IP)' if (use_tailscale | default(false) | bool and summary_tailscale_ip.stdout == '') else 'PROCESSED' }}"
           - "---------------------------------------------------"
 

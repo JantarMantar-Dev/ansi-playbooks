@@ -1,7 +1,7 @@
 #!/bin/bash
 # Add host keys to known_hosts to avoid "Host key verification failed"
 
-SERVER_IPS=("23.29.118.41" "104.225.219.149" "104.225.219.171" "104.225.219.150")
+SERVER_IPS=("23.29.118.41" "104.225.219.149" "104.225.219.171" "104.225.219.150" "107.175.94.178" "192.227.145.175")
 
 for ip in "${SERVER_IPS[@]}"; do
     echo "Scanning $ip..."

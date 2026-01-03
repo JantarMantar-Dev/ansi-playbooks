@@ -6,14 +6,21 @@ Runs standard checks. Fixes nodes that are Down or missing the correct logic.
 ansible-playbook -i inventory.ini update-swarm.yml
 ```
 
-## 2. Force Re-Initialization
+## 2. Force Swarm Re-Init (Fix worker nodes)
 Forces all NON-LEADER nodes (managers and workers) to leave the swarm and re-join.
 **Use this if:** Nodes are stuck, have split-brain, or advertising wrong addresses.
 ```bash
 ansible-playbook -i inventory.ini update-swarm.yml -e "force_swarm_reinit=true"
 ```
 
-## 3. Verify Health Only
+## 3. Force Leader Repair (Re-Init)
+Forces the LEADER node to re-initialize the swarm. This generates new join tokens and can fix advertise address issues on the leader itself.
+**Use this if:** The leader is active but advertising the wrong address or you need to rotate tokens.
+```bash
+ansible-playbook -i inventory.ini update-swarm.yml -e "force_leader_reinit=true"
+```
+
+## 4. Verify Health Only
 (Although verify runs at the end of the playbook, you can run a dry-run or specific tag if we added tags, but currently just run the playbook).
 
 ### Notes

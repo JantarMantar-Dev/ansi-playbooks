@@ -91,6 +91,8 @@
             ABORT_NO_LEADER
           {% elif inventory_hostname == leader_host and advertise_addr_mismatch | default(false) %}
             REPAIR_LEADER
+          {% elif inventory_hostname == leader_host and force_leader_reinit | default(false) | bool %}
+            REPAIR_LEADER
           {% elif inventory_hostname == leader_host %}
             LEADER_SKIP
           {% elif force_swarm_reinit | default(false) | bool %}

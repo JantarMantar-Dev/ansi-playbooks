@@ -1,0 +1,189 @@
+---
+- name: "Phase 1: Cluster Audit & Helper Discovery"
+  hosts: swarm_managers
+  become: yes
+  gather_facts: no
+  ignore_errors: yes
+  tasks:
+    - name: "AUDIT: CHECK FOR LEADER"
+      # Added ManagerStatus to the end
+      shell: "docker node ls --format '{{'{{'}}.Self{{'}}'}}|{{'{{'}}.Hostname{{'}}'}}|{{'{{'}}.Status{{'}}'}}|{{'{{'}}.Availability{{'}}'}}|{{'{{'}}.ID{{'}}'}}|{{'{{'}}.ManagerStatus{{'}}'}}'"
+      register: swarm_audit
+      changed_when: false
+      failed_when: false
+
+    - name: "LOG: Leader Audit Output"
+      debug:
+        msg: 
+          - "{{ inventory_hostname }} > docker node ls"
+          - "{{ swarm_audit.stdout_lines }}"
+      when: swarm_audit.rc == 0
+
+    - name: "AUDIT: Found Leader"
+      set_fact:
+        is_leader: true
+        active_nodes: "{{ swarm_audit.stdout_lines | map('split', '|') | selectattr(2, 'equalto', 'Ready') | map(attribute=1) | list }}"
+        down_nodes: "{{ swarm_audit.stdout_lines | map('split', '|') | selectattr(2, 'equalto', 'Down') | map(attribute=4) | list }}"
+        # Check if the node listing itself is a Leader
+        is_actual_leader: "{{ (swarm_audit.stdout_lines | select('match', '^true\\|.*\\|Leader$') | list | length) > 0 }}"
+      when: 
+        - swarm_audit.rc == 0
+        # Check for 'true|' at the start of a line (Self=true), implying valid output
+        - swarm_audit.stdout is search('^true\\|', multiline=True)
+
+    # We only need ONE valid leader to source truth from.
+    - name: "FACT: Register Leader Info"
+      set_fact:
+        swarm_leader_host: "{{ inventory_hostname }}"
+        current_active_map: "{{ active_nodes }}"
+        cleanup_ids: "{{ down_nodes }}"
+      when: is_leader | default(false)
+
+    - name: "TOKEN: Retrieve Tokens"
+      shell: |
+         echo "MANAGER:$(docker swarm join-token -q manager)"
+         echo "WORKER:$(docker swarm join-token -q worker)"
+      register: swarm_tokens
+      when: is_leader | default(false)
+      changed_when: false
+
+    - name: "FACT: Parse Tokens"
+      set_fact:
+        manager_token: "{{ swarm_tokens.stdout_lines[0].split(':')[1] }}"
+        worker_token: "{{ swarm_tokens.stdout_lines[1].split(':')[1] }}"
+        leader_ip: "{{ ansible_host }}"
+      when: is_leader | default(false)
+
+- name: "Phase 2 & 3: Node Evaluation & Repair"
+  hosts: all
+  become: yes
+  gather_facts: no
+  vars:
+    # Safely get facts from the identified leader
+    leader_host: "{{ groups['swarm_managers'] | map('extract', hostvars) | selectattr('swarm_leader_host', 'defined') | map(attribute='inventory_hostname') | first | default('') }}"
+    known_active_nodes: "{{ hostvars[leader_host]['current_active_map'] | default([]) }}"
+    join_addr_manager: "{{ hostvars[leader_host]['leader_ip'] }}:2377"
+    join_token_manager: "{{ hostvars[leader_host]['manager_token'] | default('') }}"
+    join_token_worker: "{{ hostvars[leader_host]['worker_token'] | default('') }}"
+  tasks:
+    - name: "CHECK: Local Swarm Status"
+      command: docker info --format '{{"{{"}}.Swarm.LocalNodeState{{"}}"}}'
+      register: local_status
+      changed_when: false
+
+    - name: "DECIDE: Determine Action"
+      set_fact:
+        start_action: >-
+          {% if leader_host == '' %}
+            ABORT_NO_LEADER
+          {% elif inventory_hostname == leader_host %}
+            LEADER_SKIP
+          {% elif local_status.stdout != 'active' %}
+            JOIN
+          {% elif inventory_hostname not in known_active_nodes %}
+            REPAIR
+          {% else %}
+            HEALTHY_SKIP
+          {% endif %}
+
+    - name: "REPORT: Planned Action"
+      debug:
+        msg: "Node {{ inventory_hostname }} status is {{ local_status.stdout }}. Action: {{ start_action | trim }}"
+
+    - name: "FAIL: No Leader Found"
+      fail:
+        msg: "No healthy Swarm Leader found in inventory! Cannot proceed with repairs."
+      when: (start_action | trim) == 'ABORT_NO_LEADER'
+
+    - name: "REPAIR: Force Leave Broken/Phantom Node"
+      command: docker swarm leave --force
+      when: (start_action | trim) == 'REPAIR'
+      register: leave_res
+      ignore_errors: yes
+
+    - name: "LOG: Leave Output"
+      debug:
+        msg:
+          - "{{ inventory_hostname }} > docker swarm leave --force"
+          - "{{ leave_res.stdout_lines | default(['No output']) }}"
+          - "{{ leave_res.stderr_lines | default(['No error']) }}"
+      when: (start_action | trim) == 'REPAIR'
+
+    - name: "ACTION: Join as Manager"
+      command: "docker swarm join --token {{ join_token_manager }} {{ join_addr_manager }}"
+      when: 
+        - "'swarm_managers' in group_names"
+        - ((start_action | trim) == 'JOIN') or ((start_action | trim) == 'REPAIR')
+      register: join_man
+      ignore_errors: yes
+
+    - name: "LOG: Join Manager Output"
+      debug:
+        msg:
+          - "{{ inventory_hostname }} > docker swarm join (manager)"
+          - "{{ join_man.stdout_lines | default(['No output']) }}"
+          - "{{ join_man.stderr_lines | default(['No error']) }}"
+      when: join_man is changed
+
+    - name: "ACTION: Join as Worker"
+      command: "docker swarm join --token {{ join_token_worker }} {{ join_addr_manager }}"
+      when: 
+        - "'swarm_workers' in group_names"
+        - ((start_action | trim) == 'JOIN') or ((start_action | trim) == 'REPAIR')
+      register: join_work
+      ignore_errors: yes
+
+    - name: "LOG: Join Worker Output"
+      debug:
+        msg:
+          - "{{ inventory_hostname }} > docker swarm join (worker)"
+          - "{{ join_work.stdout_lines | default(['No output']) }}"
+          - "{{ join_work.stderr_lines | default(['No error']) }}"
+      when: join_work is changed
+
+- name: "Phase 4: Cleanup Ghost Nodes"
+  hosts: swarm_managers
+  become: yes
+  gather_facts: no
+  vars:
+    # Only run on the leader we identified
+    is_designated_leader: "{{ swarm_leader_host is defined }}"
+  tasks:
+    - name: "CLEANUP: Remove Down Nodes"
+      command: "docker node rm {{ item }}"
+      with_items: "{{ cleanup_ids | default([]) }}"
+      when: is_designated_leader | default(false)
+      ignore_errors: yes
+      register: rm_res
+      changed_when: rm_res.rc == 0
+
+    - name: "LOG: Cleanup Output"
+      debug:
+        msg: 
+          - "{{ inventory_hostname }} > docker node rm {{ item.item }}"
+          - "{{ item.stdout_lines | default(['No output']) }}"
+          - "{{ item.stderr_lines | default(['No error']) }}"
+      with_items: "{{ rm_res.results }}"
+      when: 
+        - is_designated_leader | default(false)
+        - item.changed
+
+- name: "Phase 5: Verification"
+  hosts: swarm_managers
+  become: yes
+  gather_facts: no
+  run_once: true
+  tasks:
+    - name: "VERIFY: Get Final Node List"
+      command: docker node ls
+      register: final_node_ls
+      changed_when: false
+      failed_when: false
+    
+    - name: "LOG: Final Cluster State"
+      debug:
+        msg: 
+          - "FINAL CLUSTER STATE (from {{ inventory_hostname }}):"
+          - "{{ final_node_ls.stdout_lines }}"
+      when: final_node_ls.rc == 0
+

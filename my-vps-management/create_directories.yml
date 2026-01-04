@@ -1,0 +1,24 @@
+---
+- name: Create Directories from List
+  hosts: all
+  become: yes
+  vars:
+    dirs:
+      - /data/apps/viralreel/worker/files
+      - /data/apps/viralreel/api/files
+
+  tasks:
+    - name: Ensure directories exist
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ dirs }}"
+      register: dir_creation
+
+    - name: Report status for each directory
+      debug:
+        msg: "Directory {{ item.item }} {% if item.changed %}was created{% else %}already exists (skipped){% endif %}"
+      loop: "{{ dir_creation.results }}"
+      loop_control:
+        label: "{{ item.item }}"

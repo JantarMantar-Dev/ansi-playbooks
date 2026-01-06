@@ -1,29 +1,48 @@
 # ViralReel Playbook Commands
 
-## Grant Credit Playbook
+This playbook manages various tasks for the ViralReel application, such as granting credits and seeding the database. It automatically identifies the Swarm node running the `viralreel-appapi` service and executes the requested command inside the container.
 
-This playbook identifies the node running the `viralreel-appapi` service and executes the credit granting script on that node.
-
-### Usage
+## Usage
 
 Run the following command from the root of the `vps-deploy` project:
 
 ```bash
-ansible-playbook -i prod-docker/setup-swarm/inventory.ini viralreel/grant_credit.yml -e "email=<USER_EMAIL> amount=<AMOUNT>"
+ansible-playbook -i prod-docker/setup-swarm/inventory.ini viralreel/viralreel_tasks.yml -e "action=<ACTION> [options]"
 ```
 
-### Example
+### Available Actions
 
+| Action | Description | Options |
+| :--- | :--- | :--- |
+| `credit` | (Default) Grants credits to a user | `email=<USER_EMAIL> amount=<AMOUNT>` |
+| `seed_plans` | Seeds the plans database | None |
+| `seed_voices` | Seeds the voices database | None |
+| `seed_subtitles` | Seeds the subtitles database | None |
+| `seed_all` | Runs all three seeding commands | None |
+
+---
+
+## Examples
+
+### 1. Grant Credit
 To grant **100** credits to **user@example.com**:
-
 ```bash
-ansible-playbook -i prod-docker/setup-swarm/inventory.ini viralreel/grant_credit.yml -e "email=user@example.com amount=100"
+ansible-playbook -i prod-docker/setup-swarm/inventory.ini viralreel/viralreel_tasks.yml -e "email=user@example.com amount=100"
 ```
 
-### Notes
+### 2. Seed Plans
+```bash
+ansible-playbook -i prod-docker/setup-swarm/inventory.ini viralreel/viralreel_tasks.yml -e "action=seed_plans"
+```
 
-- The playbook will automatically:
-  1.  Find the Docker Swarm node running the `viralreel-appapi` service.
-  2.  SSH into that specific node.
-  3.  Execute `node dist/scripts/give-credit.js` with your provided arguments.
-- **Logging**: The playbook outputs the exact commands run (Docker checks and the credit script) and their output to your console for visibility.
+### 3. Seed All (Plans, Voices, Subtitles)
+```bash
+ansible-playbook -i prod-docker/setup-swarm/inventory.ini viralreel/viralreel_tasks.yml -e "action=seed_all"
+```
+
+---
+
+## Notes
+
+- **Auto-Discovery**: The playbook finds the specific Docker Swarm node hosting the `viralreel-appapi` service and executes commands there.
+- **Logging**: All commands and their outputs are printed to the console for easy verification.

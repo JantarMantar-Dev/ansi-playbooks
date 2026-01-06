@@ -51,16 +51,22 @@
         found_service_id: "{{ service_id }}"
       # We rely on inventory.ini to provide connection details for 'target_node_name' (e.g. racknerd-66b5b59)
 
-- name: Execute Credit Script on Target Node
+- name: Execute Commands on Target Node
   hosts: target_group
   gather_facts: no
   vars:
     service_name_pattern: "viralreel-appapi"
+    action: "{{ action | default('credit') }}"
+    # Seeding commands mapping
+    seeding_commands:
+      seed_plans: "node dist/db/seed-plans.js"
+      seed_voices: "node dist/db/seed-voices.js"
+      seed_subtitles: "node dist/db/seed-subtitles.js"
   tasks:
-    - name: Verify Email and Amount are provided
+    - name: "VALIDATION: Verify Credit Arguments"
       fail:
-        msg: "Please provide 'email' and 'amount' variables directly (e.g. -e 'email=x amount=y')."
-      when: email is not defined or amount is not defined
+        msg: "Please provide 'email' and 'amount' variables for credit action (e.g. -e 'action=credit email=x amount=y')."
+      when: action == 'credit' and (email is not defined or amount is not defined)
 
     - name: Find Container ID
       shell: "docker ps --filter 'name={{ service_name_pattern }}' --format '{{ '{{' }}.ID{{ '}}' }}' | head -n 1"
@@ -74,27 +80,50 @@
           - "Output: {{ container_id_output.stdout }}"
 
     - name: Fail if Container Not Found
-      shell: "docker ps" # Listing all containers for debug if not found
-      register: all_containers
-      when: container_id_output.stdout == ""
-
-    - name: Debug All Containers
-      debug:
-        var: all_containers.stdout_lines
-      when: container_id_output.stdout == ""
-
-    - name: Fail Message
       fail:
-        msg: "Container for service '{{ service_name_pattern }}' (ID: {{ found_service_id }}) not found on this node."
+        msg: "Container for service '{{ service_name_pattern }}' not found on this node."
       when: container_id_output.stdout == ""
 
-    - name: Execute Give Credit Script inside Container
+    # Action: Credit
+    - name: "EXECUTE: Give Credit Script"
       command: "docker exec {{ container_id_output.stdout }} node dist/scripts/give-credit.js {{ email }} {{ amount }}"
-      register: script_output
+      register: credit_output
+      when: action == 'credit'
 
-    - name: Show Script Output
+    - name: "LOG: Credit Script Output"
       debug:
         msg:
           - "Command: docker exec {{ container_id_output.stdout }} node dist/scripts/give-credit.js {{ email }} {{ amount }}"
           - "Output:"
-          - "{{ script_output.stdout_lines }}"
+          - "{{ credit_output.stdout_lines }}"
+      when: action == 'credit'
+
+    # Action: Individual Seeding
+    - name: "EXECUTE: Seeding Command ({{ action }})"
+      command: "docker exec {{ container_id_output.stdout }} {{ seeding_commands[action] }}"
+      register: seed_output
+      when: action in seeding_commands
+
+    - name: "LOG: Seeding Output ({{ action }})"
+      debug:
+        msg:
+          - "Command: docker exec {{ container_id_output.stdout }} {{ seeding_commands[action] }}"
+          - "Output:"
+          - "{{ seed_output.stdout_lines }}"
+      when: action in seeding_commands
+
+    # Action: Seed All
+    - name: "EXECUTE: Seed All Commands"
+      command: "docker exec {{ container_id_output.stdout }} {{ item.value }}"
+      register: seed_all_outputs
+      loop: "{{ seeding_commands | dict2items }}"
+      when: action == 'seed_all'
+
+    - name: "LOG: Seed All Outputs"
+      debug:
+        msg:
+          - "Command: docker exec {{ container_id_output.stdout }} {{ item.cmd[-1] }}"
+          - "Output:"
+          - "{{ item.stdout_lines }}"
+      loop: "{{ seed_all_outputs.results }}"
+      when: action == 'seed_all' and not item.skipped | default(false)

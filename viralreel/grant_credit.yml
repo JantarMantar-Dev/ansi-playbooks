@@ -1,0 +1,100 @@
+---
+- name: Find Node Running ViralReel Service
+  hosts: swarm_managers[0]
+  gather_facts: yes
+  vars:
+    service_name_pattern: "viralreel-appapi"
+  tasks:
+    - name: Find Service ID
+      shell: "docker service ls --filter 'name={{ service_name_pattern }}' --format '{{ '{{' }}.ID{{ '}}' }}'"
+      register: service_id_output
+      changed_when: false
+
+    - name: Log Service ID Finding
+      debug:
+        msg: 
+          - "Command: docker service ls --filter 'name={{ service_name_pattern }}'"
+          - "Output: {{ service_id_output.stdout }}"
+
+    - name: Set Service ID
+      set_fact:
+        service_id: "{{ service_id_output.stdout }}"
+
+    - name: Fail if Service Not Found
+      fail:
+        msg: "Service matching '{{ service_name_pattern }}' not found."
+      when: service_id == ""
+
+    - name: Find Node Name running the service
+      shell: "docker service ps {{ service_id }} --filter 'desired-state=running' --format '{{ '{{' }}.Node{{ '}}' }}' | head -n 1"
+      register: node_name_output
+      changed_when: false
+
+    - name: Log Node Finding
+      debug:
+        msg:
+          - "Command: docker service ps {{ service_id }} --filter 'desired-state=running'"
+          - "Output: {{ node_name_output.stdout }}"
+
+    - name: Set Node Name
+      set_fact:
+        target_node_name: "{{ node_name_output.stdout }}"
+
+    - name: Debug Target Info
+      debug:
+        msg: "Target Node Name: {{ target_node_name }}"
+
+    - name: Add Target Host to Group
+      add_host:
+        name: "{{ target_node_name }}"
+        groups: target_group
+        found_service_id: "{{ service_id }}"
+      # We rely on inventory.ini to provide connection details for 'target_node_name' (e.g. racknerd-66b5b59)
+
+- name: Execute Credit Script on Target Node
+  hosts: target_group
+  gather_facts: no
+  vars:
+    service_name_pattern: "viralreel-appapi"
+  tasks:
+    - name: Verify Email and Amount are provided
+      fail:
+        msg: "Please provide 'email' and 'amount' variables directly (e.g. -e 'email=x amount=y')."
+      when: email is not defined or amount is not defined
+
+    - name: Find Container ID
+      shell: "docker ps --filter 'name={{ service_name_pattern }}' --format '{{ '{{' }}.ID{{ '}}' }}' | head -n 1"
+      register: container_id_output
+      changed_when: false
+
+    - name: Log Container ID Finding
+      debug:
+        msg:
+          - "Command: docker ps --filter 'name={{ service_name_pattern }}'"
+          - "Output: {{ container_id_output.stdout }}"
+
+    - name: Fail if Container Not Found
+      shell: "docker ps" # Listing all containers for debug if not found
+      register: all_containers
+      when: container_id_output.stdout == ""
+
+    - name: Debug All Containers
+      debug:
+        var: all_containers.stdout_lines
+      when: container_id_output.stdout == ""
+
+    - name: Fail Message
+      fail:
+        msg: "Container for service '{{ service_name_pattern }}' (ID: {{ found_service_id }}) not found on this node."
+      when: container_id_output.stdout == ""
+
+    - name: Execute Give Credit Script inside Container
+      command: "docker exec {{ container_id_output.stdout }} node dist/scripts/give-credit.js {{ email }} {{ amount }}"
+      register: script_output
+
+    - name: Show Script Output
+      debug:
+        msg:
+          - "Command: docker exec {{ container_id_output.stdout }} node dist/scripts/give-credit.js {{ email }} {{ amount }}"
+          - "Output:"
+          - "{{ script_output.stdout_lines }}"

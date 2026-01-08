@@ -56,7 +56,7 @@
   gather_facts: no
   vars:
     service_name_pattern: "viralreel-appapi"
-    action: "{{ action | default('credit') }}"
+    action: "credit"
     # Seeding commands mapping
     seeding_commands:
       seed_plans: "node dist/db/seed-plans.js"

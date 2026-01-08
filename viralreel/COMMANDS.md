@@ -27,7 +27,7 @@ ansible-playbook -i prod-docker/setup-swarm/inventory.ini viralreel/viralreel_ta
 ### 1. Grant Credit
 To grant **100** credits to **user@example.com**:
 ```bash
-ansible-playbook -i prod-docker/setup-swarm/inventory.ini viralreel/viralreel_tasks.yml -e "email=user@example.com amount=100"
+ansible-playbook -i prod-docker/setup-swarm/inventory.ini viralreel/viralreel_tasks.yml -e "action=credit email=user@example.com amount=100"
 ```
 
 ### 2. Seed Plans

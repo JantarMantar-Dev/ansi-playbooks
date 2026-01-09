@@ -79,6 +79,14 @@
         state: started
         enabled: yes
 
+    - name: Determine Swarm Advertise IP
+      set_fact:
+        swarm_node_ip: "{{ ansible_tailscale0.ipv4.address if (use_tailscale | default(false) | bool) else ansible_host }}"
+
+    - name: Debug Swarm IP
+      debug:
+        msg: "Using {{ swarm_node_ip }} for Swarm advertisement (Tailscale: {{ use_tailscale | default(false) }})"
+
 - name: Initialize Swarm Manager
   hosts: swarm_managers
   become: yes
@@ -86,7 +94,7 @@
     - name: Initialize the swarm
       community.docker.docker_swarm:
         state: present
-        advertise_addr: "{{ ansible_host }}"
+        advertise_addr: "{{ swarm_node_ip }}"
       register: swarm_info
 
     - name: Get worker join token
@@ -116,10 +124,10 @@
     - name: Join the swarm
       community.docker.docker_swarm:
         state: join
-        advertise_addr: "{{ ansible_host }}"
+        advertise_addr: "{{ swarm_node_ip }}"
         join_token: "{{ hostvars[groups['swarm_managers'][0]]['worker_join_token'] }}"
         remote_addrs: 
-          - "{{ hostvars[groups['swarm_managers'][0]]['ansible_host'] }}:2377"
+          - "{{ hostvars[groups['swarm_managers'][0]]['swarm_node_ip'] }}:2377"
 
 - name: Deploy Services
   hosts: swarm_managers
@@ -135,7 +143,7 @@
         mode: '0644'
 
     - name: Deploy Docker Stack
-      command: docker stack deploy -c /home/{{ ansible_user }}/docker-compose.yml test_stack
+      command: docker stack deploy -c /home/{{ ansible_user }}/docker-compose-mtu.yml test_stack
       register: stack_deploy
       changed_when: "'Creating' in stack_deploy.stdout or 'Updating' in stack_deploy.stdout"
 
@@ -165,7 +173,7 @@
       uri:
         url: "https://{{ ansible_host }}"
         headers:
-          Host: "test.jbaba.dev"
+          Host: "mtu.jbaba.dev"
         validate_certs: no
         return_content: yes
         status_code: 200
@@ -184,5 +192,5 @@
 
     - name: Fail if verification failed
       fail:
-        msg: "Failed to verify test.jbaba.dev routing over HTTPS"
+        msg: "Failed to verify mtu.jbaba.dev routing over HTTPS"
       when: result.status != 200

@@ -142,6 +142,19 @@
         - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication no' }
       notify: Restart SSH
 
+    - name: Update package list and install new kernel
+      apt:
+        update_cache: yes
+        name:
+          - linux-image-6.8.0-90-generic
+          - linux-headers-6.8.0-90-generic
+        state: present
+
+    - name: Reboot to use new kernel
+      reboot:
+        msg: "Rebooting to load new kernel"
+        pre_reboot_delay: 5
+
   handlers:
     - name: Restart SSH
       service:

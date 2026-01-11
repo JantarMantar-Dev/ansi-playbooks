@@ -4,7 +4,7 @@
 [sources.docker_swarm_logs]
 type = "docker_logs"
 include = []      # Empty list = scrape ALL containers
-exclude = []      # You can add container names here to ignore them (e.g. "vector")
+exclude_containers = []      # You can add container names here to ignore them (e.g. "vector")
 
 # -------------------------------------------------------------------------
 # 2. TRANSFORM: Clean up Metadata

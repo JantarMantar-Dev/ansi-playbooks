@@ -1,0 +1,36 @@
+---
+- name: Deploy OpenObserve Configuration
+  hosts: all
+  become: yes
+  vars:
+    # Path relative to my-vps-management directory
+    local_vector_config: "../prod-docker/apps/openobserve/vector.toml"
+    remote_config_dir: "/data/apps/openobserve"
+    remote_config_file: "/data/apps/openobserve/vector.toml"
+
+    # Set to true to delete and re-upload the file
+    force_update: false
+
+  tasks:
+    - name: Ensure OpenObserve configuration directory exists
+      file:
+        path: "{{ remote_config_dir }}"
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Remove existing configuration if force_update is set
+      file:
+        path: "{{ remote_config_file }}"
+        state: absent
+      when: force_update | bool
+
+    - name: Upload vector.toml configuration
+      copy:
+        src: "{{ local_vector_config }}"
+        dest: "{{ remote_config_file }}"
+        mode: '0644'
+        owner: root
+        group: root
+        force: no

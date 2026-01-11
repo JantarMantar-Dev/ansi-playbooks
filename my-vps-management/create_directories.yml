@@ -6,6 +6,7 @@
     dirs:
       - /data/apps/viralreel/worker/files
       - /data/apps/viralreel/api/files
+      - /data/apps/openobserve/data
 
   tasks:
     - name: Ensure directories exist

@@ -1,11 +1,11 @@
 # -------------------------------------------------------------------------
-# 1. SOURCE: Read Docker Logs
+# 1. SOURCE: Read Docker Logs - Capture ALL containers
 # -------------------------------------------------------------------------
 [sources.docker_swarm_logs]
 type = "docker_logs"
 docker_host = "unix:///var/run/docker.sock"
-include_containers = []
-exclude_containers = ["infra-openobserve*vector"]
+# Exclude only the vector container itself to avoid recursive logging
+exclude_containers = ["infra-openobserve-qfmox1_vector"]
 
 # -------------------------------------------------------------------------
 # 2. TRANSFORM: Clean up Metadata
@@ -15,25 +15,16 @@ type = "remap"
 inputs = ["docker_swarm_logs"]
 source = '''
   # --- Standardize Timestamp ---
-  # Docker timestamps can be tricky; this ensures they are formatted correctly for O2
   .timestamp = parse_timestamp!(.timestamp, format: "%Y-%m-%dT%H:%M:%S.%fZ")
 
   # --- Extract Swarm Metadata ---
-  # Docker labels are messy (e.g., com.docker.swarm.service.name).
-  # We map them to clean, top-level fields like "service", "stack", and "node"
-  # so you can easily filter them in the OpenObserve UI.
-
   .service = .label."com.docker.swarm.service.name" || .image
   .stack = .label."com.docker.stack.namespace" || "standalone"
   .node_id = .label."com.docker.swarm.node.id" || "unknown"
   .container = .container_name
   
-  # Add the actual hostname of the server (useful for debugging hardware issues)
+  # Add the actual hostname of the server
   .host = get_hostname!() 
-
-  # --- Optional: Clean up ---
-  # Remove the massive list of raw labels to save space, now that we extracted what we need.
-  # del(.label) 
 '''
 
 # -------------------------------------------------------------------------
@@ -50,4 +41,7 @@ auth.password = "M3L8XM5oprop5wir"
 compression = "gzip"
 encoding.codec = "json"
 encoding.timestamp_format = "rfc3339"
-healthcheck.enabled = false
+
+[api]
+enabled = true
+address = "0.0.0.0:8686"

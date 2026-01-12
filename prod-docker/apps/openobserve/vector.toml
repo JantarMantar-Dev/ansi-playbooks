@@ -3,8 +3,9 @@
 # -------------------------------------------------------------------------
 [sources.docker_swarm_logs]
 type = "docker_logs"
-include = []      # Empty list = scrape ALL containers
-exclude_containers = []      # You can add container names here to ignore them (e.g. "vector")
+docker_host = "unix:///var/run/docker.sock"
+include_containers = []
+exclude_containers = ["infra-openobserve*vector"]
 
 # -------------------------------------------------------------------------
 # 2. TRANSFORM: Clean up Metadata
@@ -41,15 +42,12 @@ source = '''
 [sinks.openobserve]
 type = "http"
 inputs = ["enrich_logs"]
-# "openobserve" is the service name from your docker-compose file
-uri = "http://openobserve:5080/api/default/default/_json"
+uri = "https://logs.jbaba.dev/api/default/default/_json"
 method = "post"
+auth.strategy = "basic"
+auth.user = "naimish101.viradia@gmail.com"
+auth.password = "M3L8XM5oprop5wir"
 compression = "gzip"
 encoding.codec = "json"
-
-# AUTHENTICATION
-# These MUST match the ZO_ROOT_USER_EMAIL and PASSWORD in your docker-compose.yml
-[sinks.openobserve.auth]
-strategy = "basic"
-user = "naimish101.viradia@gmail.com"
-password = "6ZhN3c#^J5PpP#"
+encoding.timestamp_format = "rfc3339"
+healthcheck.enabled = false

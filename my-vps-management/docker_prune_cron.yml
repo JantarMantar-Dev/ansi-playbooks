@@ -1,0 +1,34 @@
+---
+- name: Setup Docker Prune Cron Job
+  hosts: racknerd-bd2de99
+  become: true
+  tasks:
+    - name: Check if Docker system prune cron job exists
+      ansible.builtin.shell: crontab -l | grep -q "Docker system prune every 3 hours"
+      register: system_prune_check
+      failed_when: false
+      changed_when: false
+
+    - name: Ensure Docker system prune -a --volumes runs every 3 hours
+      ansible.builtin.cron:
+        name: "Docker system prune every 3 hours"
+        minute: "0"
+        hour: "*/3"
+        job: "/usr/bin/docker system prune -a --volumes -f"
+        user: root
+      when: system_prune_check.rc != 0
+
+    - name: Check if Docker builder prune cron job exists
+      ansible.builtin.shell: crontab -l | grep -q "Docker builder prune every 3 hours"
+      register: builder_prune_check
+      failed_when: false
+      changed_when: false
+
+    - name: Ensure Docker builder prune -a runs every 3 hours
+      ansible.builtin.cron:
+        name: "Docker builder prune every 3 hours"
+        minute: "5"
+        hour: "*/3"
+        job: "/usr/bin/docker builder prune -a -f"
+        user: root
+      when: builder_prune_check.rc != 0

@@ -5,7 +5,8 @@
 type = "docker_logs"
 docker_host = "unix:///var/run/docker.sock"
 # Exclude only the vector container itself to avoid recursive logging
-exclude_containers = ["infra-openobserve-qfmox1_vector"]
+# Exclude Vector and OpenObserve containers to avoid recursive/unnecessary logging
+exclude_containers = ["infra-openobserve-qfmox1_vector*", "openobserve*"]
 
 # -------------------------------------------------------------------------
 # 2. TRANSFORM: Clean up Metadata

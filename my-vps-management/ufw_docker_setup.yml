@@ -1,0 +1,78 @@
+---
+- name: Setup UFW-Docker
+  hosts: all
+  become: yes
+  vars:
+    state: present # Can be 'present' or 'absent'
+
+  tasks:
+    - name: "DEBUG: Current State Mode"
+      debug:
+        msg: "Running in {{ state | upper }} mode."
+
+    # ----- INSTALLATION (state: present) -----
+    - name: Check if ufw-docker is already installed
+      stat:
+        path: /usr/local/bin/ufw-docker
+      register: ufw_docker_bin
+      when: state == 'present'
+
+    - name: Download ufw-docker script
+      get_url:
+        url: https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
+        dest: /usr/local/bin/ufw-docker
+        mode: '0755'
+      when: state == 'present' and not ufw_docker_bin.stat.exists
+
+    - name: Check if existing ufw-docker rules exist
+      shell: "grep '# BEGIN UFW AND DOCKER' /etc/ufw/after.rules"
+      register: ufw_docker_rules_check
+      failed_when: false
+      changed_when: false
+      when: state == 'present'
+
+      command: /usr/local/bin/ufw-docker install
+      register: ufw_docker_install
+      changed_when: "'Section for ufw-docker already exists' not in ufw_docker_install.stdout"
+      when: state == 'present' and ufw_docker_rules_check.rc != 0
+
+    - name: Reload UFW to apply ufw-docker rules
+      ufw:
+        state: reloaded
+      when: state == 'present' and ufw_docker_rules_check.rc != 0
+
+    - name: "VERIFY: Check ufw-docker status"
+      command: /usr/local/bin/ufw-docker status
+      register: ufw_docker_status
+      changed_when: false
+      when: state == 'present'
+
+    - name: "DEBUG: ufw-docker status output"
+      debug:
+        var: ufw_docker_status.stdout_lines
+      when: state == 'present'
+
+    # ----- REMOVAL / REVERT (state: absent) -----
+    
+    # 1. Remove rules from /etc/ufw/after.rules
+    # ufw-docker adds a block starting with "# BEGIN UFW AND DOCKER" and ending with "# END UFW AND DOCKER"
+    - name: Remove ufw-docker rules from after.rules
+      blockinfile:
+        path: /etc/ufw/after.rules
+        marker: "# {mark} UFW AND DOCKER"
+        state: absent
+      register: ufw_docker_remove_rules
+      when: state == 'absent'
+
+    # 2. Remove the binary (optional, but clean)
+    - name: Remove ufw-docker binary
+      file:
+        path: /usr/local/bin/ufw-docker
+        state: absent
+      when: state == 'absent'
+
+    # 3. Reload UFW to apply removal
+    - name: Reload UFW to apply rule removal
+      ufw:
+        state: reloaded
+      when: state == 'absent' and ufw_docker_remove_rules.changed

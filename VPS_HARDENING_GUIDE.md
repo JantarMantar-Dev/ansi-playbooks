@@ -37,8 +37,15 @@ This document outlines the security standard for our VPS infrastructure. It serv
 
 ### 2.2 The "Docker Bypass" Problem (CRITICAL)
 *   **The Issue:** By default, Docker modifies `iptables` directly to map ports, **completely bypassing UFW**. If you run `docker run -p 8080:80`, port 8080 is open to the world, even if UFW says "DENY".
-*   **The Fix:** Use `ufw-docker` or strict interface binding.
-*   **Action Item:** We must update the Ansible playbook to patch this behavior.
+*   **The Fix:** Use `ufw-docker` to solve this issue without losing Docker's powerful networking features, or use strict `swam` binding.
+*   **Implementation (handled by Ansible):**
+    1.  Download `ufw-docker` to `/usr/local/bin/ufw-docker`.
+    2.  Run `ufw-docker install` to update `/etc/ufw/after.rules`.
+    3.  Reload UFW.
+*   **Verification:**
+    *   Deploy a test container: `docker run -d -p 8081:80 nginx`
+    *   Try to access port 8081 from outside. It should be **BLOCKED**.
+    *   Allow it specifically: `ufw route allow 8081/tcp` (if needed for public access).
 
 ### 2.3 Cleaning Up Unused Ports (Mail)
 *   **Observation:** Ports 587, 465, 993 are currently open. If this specific VPS is **not** a mail server, these should be closed immediately.

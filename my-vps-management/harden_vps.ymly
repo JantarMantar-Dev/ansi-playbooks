@@ -72,7 +72,10 @@
           - docker-buildx-plugin
           - docker-compose-plugin
         state: present
+        state: present
         update_cache: yes
+
+
 
     - name: Add user to Docker group
       user:
@@ -80,22 +83,7 @@
         groups: docker
         append: yes
 
-    - name: Configure UFW (Firewall) - Allow SSH
-      ufw:
-        rule: allow
-        port: '22'
-        proto: tcp
 
-    - name: Configure UFW - Allow HTTP/HTTPS
-      ufw:
-        rule: allow
-        port: "{{ item }}"
-        proto: tcp
-      loop: ['80', '443']
-
-    - name: Enable UFW
-      ufw:
-        state: enabled
 
     - name: Create user "{{ target_user }}" with sudo privileges
       user:
@@ -160,3 +148,5 @@
       service:
         name: ssh
         state: restarted
+
+- import_playbook: port_management.yml

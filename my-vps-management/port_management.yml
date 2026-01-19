@@ -7,15 +7,20 @@
     # In 'harden' mode, these rules are DELETED.
     # In 'revert' mode, these rules are ADDED (allow).
     managed_ports:
+      # Base Ports (Always Open)
+      - { port: '22', proto: 'tcp', desc: 'Ssh Access', type: 'base', route: 'no' }
+      - { port: '80', proto: 'tcp', desc: 'Http Web', type: 'base', route: 'yes' }
+      - { port: '443', proto: 'tcp', desc: 'Https Web', type: 'base', route: 'yes' }
+      
       # Mail Ports (TCP)
-      - { port: '587', proto: 'tcp', desc: 'Mail Submission' }
-      - { port: '465', proto: 'tcp', desc: 'Mail SMTPS' }
-      - { port: '993', proto: 'tcp', desc: 'Mail IMAPS' }
+      - { port: '587', proto: 'tcp', desc: 'Mail Submission', type: 'extra', route: 'no' }
+      - { port: '465', proto: 'tcp', desc: 'Mail SMTPS', type: 'extra', route: 'no' }
+      - { port: '993', proto: 'tcp', desc: 'Mail IMAPS', type: 'extra', route: 'no' }
       # Docker Swarm Ports (Tailscale only, so remove public)
-      - { port: '2377', proto: 'tcp', desc: 'Swarm Cluster Mgmt' }
-      - { port: '7946', proto: 'tcp', desc: 'Swarm Node Comm TCP' }
-      - { port: '7946', proto: 'udp', desc: 'Swarm Node Comm UDP' }
-      - { port: '4789', proto: 'udp', desc: 'Swarm Overlay Network' }
+      - { port: '2377', proto: 'tcp', desc: 'Swarm Cluster Mgmt', type: 'extra', route: 'yes' }
+      - { port: '7946', proto: 'tcp', desc: 'Swarm Node Comm TCP', type: 'extra', route: 'yes' }
+      - { port: '7946', proto: 'udp', desc: 'Swarm Node Comm UDP', type: 'extra', route: 'yes' }
+      - { port: '4789', proto: 'udp', desc: 'Swarm Overlay Network', type: 'extra', route: 'yes' }
     
     # Mode can be 'harden' or 'revert'. Default is 'harden'.
     mode: "harden"
@@ -35,6 +40,28 @@
       debug:
         var: ufw_status_initial.stdout_lines
 
+    # 1.5 Base Configuration (Ensure Access)
+    - name: "BASE: Ensure Base Ports are Allowed (Input)"
+      ufw:
+        rule: allow
+        port: "{{ item.port }}"
+        proto: "{{ item.proto }}"
+      loop: "{{ managed_ports }}"
+      when: item.type == 'base'
+
+    - name: "BASE: Ensure Base Ports are Routed (Forward)"
+      ufw:
+        rule: allow
+        route: yes
+        port: "{{ item.port }}"
+        proto: "{{ item.proto }}"
+      loop: "{{ managed_ports }}"
+      when: item.type == 'base' and item.route == 'yes'
+
+    - name: "BASE: Enable UFW"
+      ufw:
+        state: enabled
+
     # 2. Safety First: Ensure Tailscale is Trusted
     - name: Ensure Tailscale interface is allowed (FAILSAFE)
       ufw:
@@ -43,9 +70,17 @@
         direction: in
       register: tailscale_rule
 
+    - name: Ensure Tailscale routing is allowed (Forward)
+      ufw:
+        rule: allow
+        route: yes
+        interface: tailscale0
+        direction: in
+      register: tailscale_route
+
     - name: "DEBUG: Tailscale Rule Status"
       debug:
-        msg: "Tailscale rule updated: {{ tailscale_rule.changed }}"
+        msg: "Tailscale input: {{ tailscale_rule.changed }}, routing: {{ tailscale_route.changed }}"
 
     # 3. Mode: HARDEN (Remove Public Ports)
     - name: "HARDEN: Remove Managed Ports"
@@ -55,7 +90,7 @@
         proto: "{{ item.proto }}"
         delete: yes
       loop: "{{ managed_ports }}"
-      when: mode == 'harden'
+      when: mode == 'harden' and item.type == 'extra'
       register: harden_result
 
     - name: "DEBUG: Harden Results"
@@ -73,7 +108,7 @@
         port: "{{ item.port }}"
         proto: "{{ item.proto }}"
       loop: "{{ managed_ports }}"
-      when: mode == 'revert'
+      when: mode == 'revert' and item.type == 'extra'
       register: revert_result
 
     - name: "DEBUG: Revert Results"

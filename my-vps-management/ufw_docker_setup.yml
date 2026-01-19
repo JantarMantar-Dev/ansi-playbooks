@@ -31,6 +31,7 @@
       changed_when: false
       when: state == 'present'
 
+    - name: Install ufw-docker rules
       command: /usr/local/bin/ufw-docker install
       register: ufw_docker_install
       changed_when: "'Section for ufw-docker already exists' not in ufw_docker_install.stdout"
@@ -41,9 +42,9 @@
         state: reloaded
       when: state == 'present' and ufw_docker_rules_check.rc != 0
 
-    - name: "VERIFY: Check ufw-docker status"
-      command: /usr/local/bin/ufw-docker status
-      register: ufw_docker_status
+    - name: "VERIFY: Check ufw-docker installed rules"
+      shell: grep '# BEGIN UFW AND DOCKER' /etc/ufw/after.rules
+      register: ufw_docker_verify
       changed_when: false
       when: state == 'present'
 

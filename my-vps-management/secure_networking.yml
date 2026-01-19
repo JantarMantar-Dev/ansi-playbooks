@@ -1,25 +1,14 @@
----
-- name: Secure Networking (Hardware Port Management & Docker Patch)
+- name: "WRAPPER: Debug Mode"
   hosts: all
-  become: yes
-  vars:
-    # 'harden' -> Secure ports (delete extra) & Install ufw-docker patch (present)
-    # 'revert' -> Open ports (limitless) & Remove ufw-docker patch (absent)
-    mode: 'harden' 
-
+  gather_facts: no
   tasks:
-    - name: "WRAPPER: Debug Mode"
-      debug:
-        msg: "Executing Secure Networking in {{ mode | upper }} mode."
+    - debug:
+        msg: "Executing Secure Networking in {{ mode | default('harden') | upper }} mode."
 
-    # 1. Run Port Management
-    - name: "WRAPPER: Execute Port Management"
-      import_playbook: port_management.yml
-      vars:
-        mode: "{{ mode }}"
+- import_playbook: port_management.yml
+  tags: [ports]
 
-    # 2. Run UFW-Docker Setup
-    - name: "WRAPPER: Execute UFW Docker Setup"
-      import_playbook: ufw_docker_setup.yml
-      vars:
-        state: "{{ 'present' if mode == 'harden' else 'absent' }}"
+- import_playbook: ufw_docker_setup.yml
+  tags: [docker]
+  vars:
+    state: "{{ 'present' if (mode | default('harden')) == 'harden' else 'absent' }}"

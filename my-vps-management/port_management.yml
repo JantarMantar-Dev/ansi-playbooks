@@ -1,0 +1,101 @@
+---
+- name: Port Management and Hardening
+  hosts: all
+  become: true
+  vars:
+    # List of ports to manage. Each item needs 'port', 'proto', and optional 'comment'.
+    # In 'harden' mode, these rules are DELETED.
+    # In 'revert' mode, these rules are ADDED (allow).
+    managed_ports:
+      # Mail Ports (TCP)
+      - { port: '587', proto: 'tcp', desc: 'Mail Submission' }
+      - { port: '465', proto: 'tcp', desc: 'Mail SMTPS' }
+      - { port: '993', proto: 'tcp', desc: 'Mail IMAPS' }
+      # Docker Swarm Ports (Tailscale only, so remove public)
+      - { port: '2377', proto: 'tcp', desc: 'Swarm Cluster Mgmt' }
+      - { port: '7946', proto: 'tcp', desc: 'Swarm Node Comm TCP' }
+      - { port: '7946', proto: 'udp', desc: 'Swarm Node Comm UDP' }
+      - { port: '4789', proto: 'udp', desc: 'Swarm Overlay Network' }
+    
+    # Mode can be 'harden' or 'revert'. Default is 'harden'.
+    mode: "harden"
+
+  tasks:
+    - name: "DEBUG: Current Operation Mode"
+      debug:
+        msg: "Running in {{ mode | upper }} mode."
+
+    # 1. Initial State Check
+    - name: Check current UFW status
+      command: ufw status
+      register: ufw_status_initial
+      changed_when: false
+
+    - name: "DEBUG: Initial UFW Status"
+      debug:
+        var: ufw_status_initial.stdout_lines
+
+    # 2. Safety First: Ensure Tailscale is Trusted
+    - name: Ensure Tailscale interface is allowed (FAILSAFE)
+      ufw:
+        rule: allow
+        interface: tailscale0
+        direction: in
+      register: tailscale_rule
+
+    - name: "DEBUG: Tailscale Rule Status"
+      debug:
+        msg: "Tailscale rule updated: {{ tailscale_rule.changed }}"
+
+    # 3. Mode: HARDEN (Remove Public Ports)
+    - name: "HARDEN: Remove Managed Ports"
+      ufw:
+        rule: allow
+        port: "{{ item.port }}"
+        proto: "{{ item.proto }}"
+        delete: yes
+      loop: "{{ managed_ports }}"
+      when: mode == 'harden'
+      register: harden_result
+
+    - name: "DEBUG: Harden Results"
+      debug:
+        msg: "Port {{ item.item.port }}/{{ item.item.proto }} ({{ item.item.desc }}) removed: {{ item.changed }}"
+      loop: "{{ harden_result.results }}"
+      when: mode == 'harden' and harden_result.results is defined
+      loop_control:
+        label: "{{ item.item.port }}/{{ item.item.proto }}"
+
+    # 4. Mode: REVERT (Restore Public Ports - Fail Safe)
+    - name: "REVERT: Restore Managed Ports"
+      ufw:
+        rule: allow
+        port: "{{ item.port }}"
+        proto: "{{ item.proto }}"
+      loop: "{{ managed_ports }}"
+      when: mode == 'revert'
+      register: revert_result
+
+    - name: "DEBUG: Revert Results"
+      debug:
+        msg: "Port {{ item.item.port }}/{{ item.item.proto }} ({{ item.item.desc }}) restored: {{ item.changed }}"
+      loop: "{{ revert_result.results }}"
+      when: mode == 'revert' and revert_result.results is defined
+      loop_control:
+        label: "{{ item.item.port }}/{{ item.item.proto }}"
+
+    # 5. Final Verification and Reload
+    # Only reload if changes were made to ensure rules apply
+    - name: Reload UFW if changes occurred
+      ufw:
+        state: reloaded
+      when: tailscale_rule.changed or (harden_result.changed | default(false)) or (revert_result.changed | default(false))
+
+    - name: "VERIFY: Final UFW Status"
+      command: ufw status
+      register: ufw_status_final
+      changed_when: false
+
+    - name: "DEBUG: Final UFW Status"
+      debug:
+        var: ufw_status_final.stdout_lines

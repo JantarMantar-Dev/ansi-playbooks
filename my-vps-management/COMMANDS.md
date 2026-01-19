@@ -39,3 +39,17 @@ ansible-playbook -i inventory.ini docker_prune_cron.yml
 - **Builder Prune**: Runs at minute 5.
 - **User**: root
 - **Idempotency**: The playbook explicitly checks for the existence of the cron jobs by searching the crontab (`crontab -l | grep`) before attempting to set them. This ensures they are only configured if not already present.
+
+# Port Management & Hardening
+
+This playbook manages UFW firewall rules, specifically for hardening by removing public access to mail and swarm ports while ensuring Tailscale access is preserved.
+
+## Run Playbook (Harden / Default)
+```bash
+ansible-playbook -i inventory.ini port_management.yml
+```
+
+## Run Playbook (Revert / Open Ports)
+```bash
+ansible-playbook -i inventory.ini port_management.yml -e "mode=revert"
+```

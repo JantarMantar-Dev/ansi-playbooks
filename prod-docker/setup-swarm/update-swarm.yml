@@ -63,6 +63,94 @@
         leader_ip: "{{ leader_tailscale_ip.stdout if (use_tailscale | default(false) | bool and leader_tailscale_ip.rc == 0 and leader_tailscale_ip.stdout != '') else ansible_host }}"
       when: is_leader | default(false)
 
+- name: "Phase 1.5: Auto-Recovery - No Leader Detected"
+  hosts: swarm_managers[0]
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: "CHECK: Was Any Leader Found in Phase 1?"
+      set_fact:
+        any_leader_found: "{{ groups['swarm_managers'] | map('extract', hostvars) | selectattr('swarm_leader_host', 'defined') | list | length > 0 }}"
+
+    - name: "LOG: No Leader - Starting Auto-Recovery"
+      debug:
+        msg:
+          - "============================================"
+          - "  WARNING: No Swarm Leader detected!"
+          - "  Starting Auto-Recovery on {{ inventory_hostname }}"
+          - "============================================"
+      when: not any_leader_found | bool
+
+    - name: "RECOVERY: Check Local Swarm State"
+      command: docker info --format '{{"{{"}}.Swarm.LocalNodeState{{"}}"}}'
+      register: recovery_local_state
+      when: not any_leader_found | bool
+      changed_when: false
+      failed_when: false
+
+    - name: "RECOVERY: Get Tailscale IP"
+      shell: "ip -4 addr show tailscale0 | awk '/inet / {print $2}' | cut -d/ -f1"
+      register: recovery_tailscale_ip
+      when:
+        - not any_leader_found | bool
+        - use_tailscale | default(false) | bool
+      changed_when: false
+      failed_when: false
+
+    - name: "RECOVERY: Set Advertise Address"
+      set_fact:
+        recovery_advertise_addr: "{{ recovery_tailscale_ip.stdout if (use_tailscale | default(false) | bool and recovery_tailscale_ip.rc | default(1) == 0 and recovery_tailscale_ip.stdout | default('') != '') else ansible_host }}"
+      when: not any_leader_found | bool
+
+    - name: "RECOVERY: Force Leave Broken Swarm"
+      command: docker swarm leave --force
+      when:
+        - not any_leader_found | bool
+        - recovery_local_state.stdout | default('') in ['error', 'locked', 'active']
+      ignore_errors: yes
+
+    - name: "RECOVERY: Initialize New Swarm"
+      command: "docker swarm init --advertise-addr {{ recovery_advertise_addr }} --listen-addr {{ recovery_advertise_addr }}:2377"
+      when: not any_leader_found | bool
+      register: recovery_init
+
+    - name: "RECOVERY: Retrieve New Tokens"
+      shell: |
+         echo "MANAGER:$(docker swarm join-token -q manager)"
+         echo "WORKER:$(docker swarm join-token -q worker)"
+      register: recovery_tokens
+      when:
+        - not any_leader_found | bool
+        - recovery_init.rc == 0
+      changed_when: false
+
+    - name: "RECOVERY: Register as New Leader"
+      set_fact:
+        is_leader: true
+        swarm_leader_host: "{{ inventory_hostname }}"
+        manager_token: "{{ recovery_tokens.stdout_lines[0].split(':')[1] }}"
+        worker_token: "{{ recovery_tokens.stdout_lines[1].split(':')[1] }}"
+        leader_ip: "{{ recovery_advertise_addr }}"
+        leader_tailscale_ip: "{{ recovery_tailscale_ip | default({'stdout': '', 'rc': 1}) }}"
+        current_active_map: []
+        cleanup_ids: []
+      when:
+        - not any_leader_found | bool
+        - recovery_init.rc == 0
+
+    - name: "LOG: Recovery Complete"
+      debug:
+        msg:
+          - "============================================"
+          - "  Auto-Recovery COMPLETE"
+          - "  New Leader: {{ inventory_hostname }}"
+          - "  Advertise Addr: {{ recovery_advertise_addr }}"
+          - "  All workers will be re-joined automatically."
+          - "============================================"
+      when:
+        - not any_leader_found | bool
+        - recovery_init.rc == 0
+
 - name: "Phase 2 & 3: Node Evaluation & Repair"
   hosts: all
   become: yes

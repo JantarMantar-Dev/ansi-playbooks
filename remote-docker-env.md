@@ -245,4 +245,4 @@ for s in buildinpublic-app-b37nff coreex-app-70cz87 jbaba-blog-hq29mq serivcehq-
 done
 ```
 
-The live services currently retain temporary `app_runtime` and `racknerd-66b5b59` exclusion constraints from the recovery. The intended steady state is `node.role==worker` for stateless apps, with any unhealthy worker drained at the node level. Follow [docs/swarm-post-recovery-validation.md](docs/swarm-post-recovery-validation.md) before removing the temporary constraints.
+The intended steady state is `node.role==worker` for stateless apps, with any unhealthy worker drained at the node level. Dokploy auto-deploys replace direct service placement overrides, but node `Drain` persists in Swarm. The four SSD workers and `racknerd-66b5b59` are currently drained because they have not passed the post-recovery validation gate. Follow [docs/swarm-post-recovery-validation.md](docs/swarm-post-recovery-validation.md) before returning a node to `Active` or removing any remaining legacy label constraints.

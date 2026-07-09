@@ -25,6 +25,20 @@ sudo docker node update --availability active <node-name>
 
 With failed nodes drained, normal app services retain the intended `node.role==worker` constraint and Swarm can use every healthy worker.
 
+## Why Node Drain Survives Auto-Deploy
+
+Dokploy stores an application's Swarm placement in its `placementSwarm` configuration and rebuilds the Docker service on deployment. A direct `docker service update --constraint-add ...` is therefore a live, temporary override: the next Dokploy auto-deploy can replace it.
+
+The intended persistent Dokploy configuration for the public applications is only:
+
+```json
+{"Constraints":["node.role==worker"]}
+```
+
+Do not edit Dokploy's database to change that baseline. Node availability is part of the Swarm scheduler state, not an application service override. A worker set to `Drain` remains ineligible for new tasks after a Dokploy build/deploy, so automatic deployments continue to use only the workers that have passed validation.
+
+On 2026-07-09, an automatic blog deploy demonstrated this behavior: Dokploy removed manually added `app_runtime` constraints, scheduled the blog on an SSD worker, and the public route returned `502`. The durable containment was to drain the four unvalidated SSD workers and the full-disk `racknerd-66b5b59` worker. The blog then rescheduled to an active RackNerd worker with its normal `node.role==worker` specification and returned `200`.
+
 ## Why This Exists
 
 `docker node ls` reporting `Ready` verifies Swarm membership and control-plane reachability. It does not prove that a node can participate in the `dokploy-network` overlay data path, pull private images, start containers with sufficient disk, or receive a Traefik request from the manager.

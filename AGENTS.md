@@ -55,16 +55,13 @@ Safe order:
 
 Never run manager `docker swarm leave --force` or `docker swarm init` just to fix logged-out Tailscale.
 
-2026-07-09 final placement note: all production nodes returned to Tailscale and Docker `Ready`, but app traffic was stable only after constraining stateless app services to the two RackNerd app-runtime workers:
+## Placement After Recovery
 
-```bash
-docker node update --label-add app_runtime=true racknerd-dd44635
-docker node update --label-add app_runtime=true racknerd-fb9a7f4
-```
+The normal cluster design is manager/worker: stateful Dokploy/data services stay on the manager and stateless public apps use only `node.role==worker`. Do not add `node.labels.app_runtime==true` as a new default. It was a temporary 2026-07-09 containment workaround when SSD workers had not passed overlay and capacity verification.
 
-The stateless app services now use `node.role==worker`, `node.labels.app_runtime==true`, and `node.hostname != racknerd-66b5b59`. Leave `dokploy`, `dokploy-postgres`, `dokploy-redis`, and `viralreel-db-vwkfbt` on the manager.
+When a worker is unhealthy, drain that node rather than narrowing every app's placement. Return it to `Active` only after the post-recovery Tailscale, disk/image, overlay-canary, and public-route gates pass. Follow [docs/swarm-post-recovery-validation.md](docs/swarm-post-recovery-validation.md) before removing the temporary legacy label constraints currently present on public apps.
 
-`racknerd-66b5b59` hit `No space left on device` during image pull and later could not create Ansible temp dirs. Do not run Docker prune or delete data there without explicit user approval; treat disk cleanup as a separate approved maintenance task.
+`racknerd-66b5b59` previously hit `No space left on device` during image pull and later could not create Ansible temp dirs. Do not run Docker prune or delete data there without explicit user approval; treat disk cleanup as a separate approved maintenance task.
 
 ## Tailscale Browser Login Approval
 

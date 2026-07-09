@@ -212,7 +212,7 @@ Final verified state:
 1. Production manager and all seven production workers were logged back into Tailscale.
 2. `docker node ls` showed all eight production nodes as `Ready`.
 3. The separate RackNerd test swarm nodes in `prod-docker/setup-swarm/testinventory.ini` were also logged back into Tailscale and showed `Ready`.
-4. Stateless app services were moved off the manager and constrained to the `app_runtime=true` RackNerd workers.
+4. Stateless app services were moved off the manager and temporarily constrained to the `app_runtime=true` RackNerd workers while the wider worker pool remained unvalidated.
 5. `viralreel-db-vwkfbt`, `dokploy`, `dokploy-postgres`, and `dokploy-redis` stayed manager-pinned.
 6. `racknerd-66b5b59` is Tailscale/Swarm `Ready` but is excluded from app placement because image pull failed with `No space left on device`; direct SSH showed `/dev/vda2` at `19G/19G`, `100%` full. Cleanup needs explicit approval.
 
@@ -234,7 +234,7 @@ sudo docker swarm leave --force
 sudo docker swarm join --token <worker-token> --advertise-addr <worker-tailscale-ip> 100.73.236.49:2377
 ```
 
-Current app placement guard:
+Current temporary placement state and return-to-baseline policy:
 
 ```bash
 docker node inspect racknerd-dd44635 --format '{{json .Spec.Labels}}'
@@ -245,4 +245,4 @@ for s in buildinpublic-app-b37nff coreex-app-70cz87 jbaba-blog-hq29mq serivcehq-
 done
 ```
 
-Expected app constraints include `node.role==worker`, `node.labels.app_runtime==true`, and `node.hostname != racknerd-66b5b59`.
+The live services currently retain temporary `app_runtime` and `racknerd-66b5b59` exclusion constraints from the recovery. The intended steady state is `node.role==worker` for stateless apps, with any unhealthy worker drained at the node level. Follow [docs/swarm-post-recovery-validation.md](docs/swarm-post-recovery-validation.md) before removing the temporary constraints.

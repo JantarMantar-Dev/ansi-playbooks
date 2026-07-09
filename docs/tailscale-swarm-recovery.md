@@ -333,20 +333,9 @@ for s in $services; do
 done
 ```
 
-In the 2026-07-09 recovery, plain `node.role==worker` briefly placed some app tasks on SSDNodes and public routes returned `502`. The stable final placement used an explicit app-runtime label on the two RackNerd workers that passed image pull and curl checks:
+In the 2026-07-09 recovery, plain `node.role==worker` briefly placed some app tasks on SSDNodes and public routes returned `502`. The response was to temporarily constrain apps to two known-good RackNerd nodes with an `app_runtime` label. That was emergency containment, not the normal placement policy.
 
-```bash
-docker node update --label-add app_runtime=true racknerd-dd44635
-docker node update --label-add app_runtime=true racknerd-fb9a7f4
-
-for s in $services; do
-  docker service update --with-registry-auth \
-    --constraint-add node.role==worker \
-    --constraint-add "node.hostname != racknerd-66b5b59" \
-    --constraint-add node.labels.app_runtime==true \
-    --detach=false "$s"
-done
-```
+The intended steady state is still `node.role==worker` for every stateless app. Before returning to it, validate every worker's Tailscale state, disk capacity, private-image access, and manager-side overlay canary. If a worker fails a gate, set that node to `Drain`; do not add `app_runtime` to new apps or make it a permanent cluster tier. The complete procedure, including safe removal of the temporary constraints, is in [swarm-post-recovery-validation.md](swarm-post-recovery-validation.md).
 
 Keep `viralreel-db-vwkfbt`, `dokploy`, `dokploy-postgres`, and `dokploy-redis` manager-pinned. Do not move database services during app rebalance.
 

@@ -311,7 +311,9 @@ done
 '
 ```
 
-Repeat the public curl baseline from the pre-upgrade section. Dokploy is considered successfully upgraded only when:
+Repeat the public curl baseline from the pre-upgrade section. If the upgrade or its recovery touched Tailscale, Swarm membership, worker networking, or application placement, also complete [swarm-post-recovery-validation.md](swarm-post-recovery-validation.md) before returning the cluster to normal worker scheduling. `docker node ls` showing `Ready` is not sufficient proof of overlay traffic or worker capacity.
+
+Dokploy is considered successfully upgraded only when:
 
 * `dokploy` is `1/1`.
 * The container package version equals `TARGET_DOKPLOY_VERSION`.
@@ -320,6 +322,7 @@ Repeat the public curl baseline from the pre-upgrade section. Dokploy is conside
 * `dokploy-postgres` remains `1/1`.
 * Existing app services and dynamic Traefik files are still present.
 * The Dokploy UI can list existing projects/services and initiate normal service monitoring without creating duplicate services.
+* Any worker changed during the upgrade/recovery has passed the post-recovery validation gate; temporary application labels are not treated as the permanent placement policy.
 
 ## Rollback
 

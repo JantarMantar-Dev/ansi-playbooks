@@ -18,7 +18,7 @@ The 2026-07-09 incident had this exact profile:
 
 * `jbaba-blog-hq29mq` showed `1/1` and its Nginx process returned local `200 OK`.
 * `https://blog.jbaba.dev/` returned `502`.
-* A Dokploy redeploy had left the service with only `node.role==worker`.
+* At the time of the incident, the service had only `node.role==worker`; the evidence did not establish which deployment action removed the temporary restrictions.
 * Swarm placed it on an SSD worker that was not a peer of the manager's `dokploy-network` overlay.
 * Other apps constrained to the approved RackNerd runtime workers continued to return `200`.
 
@@ -87,9 +87,9 @@ sudo docker exec \"\$cid\" sh -lc 'wget -S -O /dev/null -T 10 http://127.0.0.1:$
 
 If this returns `200` while the public URL returns `502`, do not rebuild the image. Continue to placement and overlay checks.
 
-## 3. Check Approved Runtime Placement
+## 3. Check Worker Placement and Health
 
-The currently approved public-app workers are `racknerd-dd44635` and `racknerd-fb9a7f4`; both have `app_runtime=true`. `racknerd-66b5b59` must stay excluded until its disk is separately repaired.
+The intended normal constraint for a stateless public application is `node.role==worker`. `app_runtime=true` was a temporary recovery containment label, not the default design. A worker that cannot carry public traffic should be drained at the node level while it is repaired and tested.
 
 ```bash
 ssh -i ~/.ssh/ssdnode-2025 jbaba@107.175.69.159 '
@@ -100,32 +100,27 @@ sudo docker service inspect <service-name> \
 '
 ```
 
-Expected application constraints are:
+Expected steady-state application constraint:
 
 ```text
 node.role==worker
-node.labels.app_runtime==true
-node.hostname != racknerd-66b5b59
 ```
 
-If the service has only `node.role==worker`, it can land on an unsuitable worker after a deploy, even though it is `Running`.
+The live cluster still has legacy `app_runtime` and full-disk-node exclusion constraints from the July recovery. Do not copy those constraints to new applications. Follow [swarm-post-recovery-validation.md](swarm-post-recovery-validation.md) to validate workers, drain unhealthy nodes, and remove those temporary restrictions safely.
 
-## 4. Repair Placement (Approval Required)
+## 4. Quarantine a Failed Worker (Approval Required)
 
-Only after confirming the required constraints are absent, restore them for the affected service:
+If a local-health/public-502 check identifies a specific worker as the failing data-path boundary, prevent new tasks from being scheduled there:
 
 ```bash
 ssh -i ~/.ssh/ssdnode-2025 jbaba@107.175.69.159 '
-sudo docker service update --detach=true --with-registry-auth \
-  --constraint-add "node.labels.app_runtime==true" \
-  --constraint-add "node.hostname != racknerd-66b5b59" \
-  <service-name>
+sudo docker node update --availability drain <failed-worker>
 '
 ```
 
-Inspect constraints first and do not repeat the command after they exist; Docker accepts duplicate rules. Preserve `node.role==worker`.
+Swarm will replace a task that can no longer run on the drained worker. Preserve the application's normal `node.role==worker` constraint. Return the node to `Active` only after it passes the post-recovery validation gates.
 
-This directly repairs the running Swarm service. To make the placement survive future Dokploy redeploys, set the equivalent worker/placement configuration in that application's Dokploy **Advanced → Cluster Settings**, save it, and perform a controlled redeploy. Confirm with `docker service inspect` afterward; the Docker service is the source of truth.
+Do not use a new `app_runtime` label as a substitute for repairing or draining a failed worker. In Dokploy, save the ordinary worker placement configuration under **Advanced → Cluster Settings**, then make a controlled redeploy and confirm it with `docker service inspect`; Docker is the source of truth.
 
 ## 5. Verify the Full Path
 

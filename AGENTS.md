@@ -116,6 +116,8 @@ Before changing the production Dokploy version, read [docs/dokploy-upgrade.md](d
 
 Keep `dokploy-postgres`, `dokploy`, `/etc/dokploy`, and `dokploy-redis` intact during the upgrade. Redis may be unused on newer self-hosted Dokploy releases, but remove it only in a separate approved maintenance task after the upgraded instance is stable.
 
+2026-07-09 upgrade lesson: Dokploy publishes host-mode port `3000` and only the manager can run it. Use `--detach=true --update-order stop-first` for future Dokploy service updates. If an attached Docker CLI prints repeated `no suitable node ... host-mode port already in use` after accepting the update, inspect `docker service ps dokploy`; Swarm may already be completing the stop-first restart.
+
 ## Style
 
 * Keep docs command-first and recovery-oriented.

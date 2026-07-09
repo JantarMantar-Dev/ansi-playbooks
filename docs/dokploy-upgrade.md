@@ -6,8 +6,10 @@ Current observed production state on 2026-07-09:
 
 ```text
 manager: racknerd-fb2892c / 107.175.69.159
-current Dokploy version: v0.27.0
-current Dokploy service image: dokploy/dokploy:latest@sha256:5a241a958a98b66f2e19052909e1eeedf776e680f5957211bd0d7ed28ccd5592
+previous Dokploy version before 2026-07-09 upgrade: v0.27.0
+previous Dokploy service image before 2026-07-09 upgrade: dokploy/dokploy:latest@sha256:5a241a958a98b66f2e19052909e1eeedf776e680f5957211bd0d7ed28ccd5592
+current Dokploy version after 2026-07-09 upgrade: v0.29.11
+current Dokploy service image after 2026-07-09 upgrade: dokploy/dokploy:v0.29.11
 target researched latest stable: v0.29.11
 dokploy service placement: node.role == manager
 dokploy-traefik image: traefik:v3.6.1
@@ -44,6 +46,7 @@ For the 2026-07-09 upgrade from `v0.27.0` to `v0.29.11`, confirm at least these 
 * `v0.29.9` changed self-hosted Redis behavior. Official troubleshooting now says self-hosted instances older than `v0.29.9` show `dokploy-redis`, but Redis is no longer used in self-hosted Dokploy since `v0.29.9`. Do not delete the `dokploy-redis` service or volume during the upgrade window; treat removal as a later maintenance task after the upgraded instance has been stable.
 * Dokploy does not update `dokploy-traefik` automatically. Leave Traefik unchanged during the Dokploy upgrade unless a separate Traefik upgrade has been researched, approved, and tested.
 * The upstream install script has two paths. `sh -s update` pulls the image and runs `docker service update --image ... dokploy`. The plain install path can run `docker swarm leave --force` and `docker swarm init`; never run the plain install path on the existing production manager.
+* On this swarm, Dokploy publishes port `3000` in host mode and only the manager can run the service. Future upgrades should use `--detach=true --update-order stop-first` so Docker does not sit in a misleading `no suitable node ... host-mode port already in use` wait loop while the old task still owns port `3000`.
 
 Reference pages checked on 2026-07-09:
 
@@ -215,14 +218,18 @@ grep -n \"docker service update --image\" /tmp/dokploy-install-\${TARGET_DOKPLOY
 "
 ```
 
-Run only the update path:
+Run the same safe update operation in a detached, stop-first form. This is intentionally equivalent to the upstream update path plus the rollout flags this production swarm needs:
 
 ```bash
 ssh -i "$SSH_KEY" "$REMOTE_HOST" "
 set -eu
 TARGET_DOKPLOY_VERSION=$TARGET_DOKPLOY_VERSION
-sudo DOKPLOY_VERSION=\"\$TARGET_DOKPLOY_VERSION\" \
-  bash /tmp/dokploy-install-\${TARGET_DOKPLOY_VERSION}.sh update
+sudo docker pull dokploy/dokploy:\"\$TARGET_DOKPLOY_VERSION\"
+sudo docker service update \
+  --detach=true \
+  --update-order stop-first \
+  --image dokploy/dokploy:\"\$TARGET_DOKPLOY_VERSION\" \
+  dokploy
 "
 ```
 
@@ -234,6 +241,23 @@ set -eu
 curl -fsSL https://dokploy.com/security/0.29.3.sh -o /tmp/dokploy-security-0.29.3.sh
 sudo bash /tmp/dokploy-security-0.29.3.sh
 '
+```
+
+The security script also performs a `docker service update`. If it waits with repeated `no suitable node ... host-mode port already in use` messages after printing `Updating Dokploy service...`, detach from the local SSH command with `Ctrl-C` once the Docker service update has been accepted, then inspect the service:
+
+```bash
+ssh -i "$SSH_KEY" "$REMOTE_HOST" '
+sudo docker service inspect dokploy \
+  --format "Update={{if .UpdateStatus}}{{.UpdateStatus.State}} {{.UpdateStatus.Message}}{{else}}none{{end}} Env={{json .Spec.TaskTemplate.ContainerSpec.Env}} Secrets={{json .Spec.TaskTemplate.ContainerSpec.Secrets}}"
+sudo docker service ps --no-trunc dokploy
+'
+```
+
+Expected after the security script:
+
+```text
+BETTER_AUTH_SECRET_FILE=/run/secrets/dokploy-auth-secret
+dokploy-auth-secret present in Docker secrets
 ```
 
 ## Post-Upgrade Verification
@@ -322,3 +346,72 @@ After the upgrade has been stable for a separate maintenance window:
 * Decide whether to remove the now-unused `dokploy-redis` service and volume. Do not do this in the upgrade window.
 * Decide whether to upgrade `dokploy-traefik` from `v3.6.1` to the Dokploy docs example `v3.6.7` or a newer researched Traefik release. Treat that as a separate routing change with its own rollback plan.
 * Fix the backup cleanup permission issue seen in Dokploy logs: backup deletion to Wasabi returned `AccessDenied` on 2026-07-09.
+
+## Execution Record: 2026-07-09
+
+This upgrade was executed on 2026-07-09 from `v0.27.0` to `v0.29.11`.
+
+Backup created on the manager:
+
+```text
+/root/dokploy-upgrade-20260709T145832Z
+etc-dokploy.tgz             67M
+dokploy-service-specs.json  16K
+dokploy-postgres.sql.gz     46K
+```
+
+Observed before upgrade:
+
+```text
+dokploy                           1/1  dokploy/dokploy:latest@sha256:5a241a958a98b66f2e19052909e1eeedf776e680f5957211bd0d7ed28ccd5592
+dokploy-postgres                  1/1  postgres:16
+dokploy-redis                     1/1  redis:7
+all eight swarm nodes             Ready
+Dokploy package version           v0.27.0
+```
+
+Observed during upgrade:
+
+* Pulling `dokploy/dokploy:v0.29.11` took roughly 12 minutes.
+* Running the upstream `update` path accepted the image change but the attached Docker CLI repeatedly printed `no suitable node ... host-mode port already in use`. Detaching the client with `Ctrl-C` did not roll back the accepted update; Swarm then performed the existing `stop-first` update and started the new task.
+* The official `0.29.3` security script migrated 1 existing 2FA record, created `dokploy-auth-secret`, and updated the Dokploy service. Its attached Docker CLI hit the same host-mode wait loop; after detaching, Swarm completed the restart.
+* Health remained `starting` for about 60 to 100 seconds after each Dokploy restart before returning to `1/1`.
+
+Observed after upgrade:
+
+```text
+dokploy                           1/1  dokploy/dokploy:v0.29.11
+dokploy-postgres                  1/1  postgres:16
+dokploy-redis                     1/1  redis:7
+Dokploy package version           v0.29.11
+Update state                      completed
+BETTER_AUTH_SECRET_FILE           /run/secrets/dokploy-auth-secret
+dokploy-auth-secret               present
+```
+
+Post-upgrade public checks matched the baseline:
+
+```text
+https://coreex.in/                     code=200
+https://test.coreex.in/                 code=404
+https://buildinpublic.page/            code=200
+https://www.buildinpublic.page/        code=403
+https://blog.jbaba.dev/                code=200
+https://servicehq.biz/                 code=200
+https://www.servicehq.biz/             code=200
+https://getviralreel.com/              code=200
+https://www.getviralreel.com/          code=200
+https://app.getviralreel.com/          code=200
+https://api.getviralreel.com/          code=404
+https://dokploy.jbaba.dev/             code=200
+```
+
+Post-upgrade Dokploy logs showed:
+
+```text
+Postgres is reachable
+Migration complete
+Running DokployVersion: v0.29.11
+Server Started on: http://0.0.0.0:3000
+Starting Deployment Worker
+```

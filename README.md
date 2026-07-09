@@ -7,6 +7,7 @@ Operations repository for the remote Docker Swarm, Dokploy, VPS management, and 
 General operations:
 
 * [Remote Docker environment](remote-docker-env.md)
+* [Dokploy upgrade runbook](docs/dokploy-upgrade.md)
 * [Production recovery: 2026-07-09](docs/production-recovery-2026-07-09.md)
 * [Tailscale swarm recovery](docs/tailscale-swarm-recovery.md)
 * [Agent/operator guide](AGENTS.md)
@@ -78,6 +79,7 @@ done
 | Need | Start here |
 | :--- | :--- |
 | Current remote Docker/Dokploy layout | [remote-docker-env.md](remote-docker-env.md) |
+| Upgrade production Dokploy safely | [docs/dokploy-upgrade.md](docs/dokploy-upgrade.md) |
 | Exact failed-env recovery commands from 2026-07-09 | [docs/production-recovery-2026-07-09.md](docs/production-recovery-2026-07-09.md) |
 | Restore Tailscale and worker swarm capacity | [docs/tailscale-swarm-recovery.md](docs/tailscale-swarm-recovery.md) |
 | CoreEx wildcard routing and service details | [docs/coreex-app.md](docs/coreex-app.md) |

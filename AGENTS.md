@@ -105,9 +105,16 @@ SSH_KEY=~/.ssh/ssdnode-2025 ./scripts/infra/debug-ssh-manager.sh servicehq
 Use these files for their intended scope:
 
 * `remote-docker-env.md` - general environment, availability, safety, and shared infrastructure.
+* `docs/dokploy-upgrade.md` - Dokploy version research, backup, upgrade, verification, and rollback runbook.
 * `docs/production-recovery-2026-07-09.md` - exact incident recovery commands and evidence.
 * `docs/coreex-app.md` - CoreEx-specific app, wildcard routing, and image notes.
 * `README.md` - index, quick links, and common commands.
+
+## Dokploy Upgrade
+
+Before changing the production Dokploy version, read [docs/dokploy-upgrade.md](docs/dokploy-upgrade.md). Repeat its research gate on the day of the change, pin the target version explicitly, and run only the update path of the upstream install script. Never run `curl -sSL https://dokploy.com/install.sh | sh` on the existing manager because the install path can leave and reinitialize the swarm.
+
+Keep `dokploy-postgres`, `dokploy`, `/etc/dokploy`, and `dokploy-redis` intact during the upgrade. Redis may be unused on newer self-hosted Dokploy releases, but remove it only in a separate approved maintenance task after the upgraded instance is stable.
 
 ## Style
 

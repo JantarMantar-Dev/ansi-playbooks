@@ -17,6 +17,7 @@ General operations:
 App-specific docs:
 
 * [CoreEx operations](docs/coreex-app.md)
+* [jbaba Blog 502 placement recovery](docs/jbaba-blog-502-runbook.md)
 * [ViralReel commands](viralreel/COMMANDS.md)
 * [OpenObserve commands](prod-docker/apps/openobserve/COMMANDS.md)
 
@@ -83,6 +84,7 @@ done
 | Exact failed-env recovery commands from 2026-07-09 | [docs/production-recovery-2026-07-09.md](docs/production-recovery-2026-07-09.md) |
 | Restore Tailscale and worker swarm capacity | [docs/tailscale-swarm-recovery.md](docs/tailscale-swarm-recovery.md) |
 | CoreEx wildcard routing and service details | [docs/coreex-app.md](docs/coreex-app.md) |
+| jbaba Blog is `1/1` but its public route returns `502` | [docs/jbaba-blog-502-runbook.md](docs/jbaba-blog-502-runbook.md) |
 | Swarm repair playbook options and warnings | [prod-docker/setup-swarm/COMMANDS.md](prod-docker/setup-swarm/COMMANDS.md) |
 | Host inventory | [prod-docker/setup-swarm/inventory.ini](prod-docker/setup-swarm/inventory.ini) |
 | VPS hardening and firewall notes | [VPS_HARDENING_GUIDE.md](VPS_HARDENING_GUIDE.md) |

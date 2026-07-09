@@ -1,0 +1,248 @@
+---
+- name: "Tailscale audit, update, auth, and worker rejoin"
+  hosts: all
+  become: yes
+  gather_facts: no
+  vars:
+    update_tailscale: false
+    disable_tailscale_dns: false
+    auth_tailscale: false
+    start_browser_login: false
+    wait_for_tailscale_login: false
+    tailscale_login_wait_seconds: 300
+    tailscale_login_poll_seconds: 5
+    tailscale_up_timeout_seconds: 20
+    rejoin_swarm_workers: false
+    manager_tailscale_ip: "100.73.236.49"
+    apt_lock_timeout: 60
+  tasks:
+    - name: "AUDIT: Tailscale version"
+      shell: "tailscale version 2>/dev/null | head -n1 || true"
+      register: tailscale_version_before
+      changed_when: false
+
+    - name: "AUDIT: Tailscale self status"
+      shell: "tailscale status --self 2>/dev/null || true"
+      register: tailscale_self_before
+      changed_when: false
+
+    - name: "AUDIT: Tailscale IPv4"
+      shell: "tailscale ip -4 2>/dev/null || true"
+      register: tailscale_ip_before
+      changed_when: false
+
+    - name: "AUDIT: Docker swarm state"
+      shell: "docker info 2>/dev/null | egrep 'Swarm:| NodeID:| Node Address:| Is Manager:| Managers:|  Address:' || true"
+      register: docker_swarm_before
+      changed_when: false
+
+    - name: "LOG: Initial node state"
+      debug:
+        msg:
+          - "Host: {{ inventory_hostname }}"
+          - "Tailscale version: {{ tailscale_version_before.stdout | default('unknown') }}"
+          - "Tailscale IP: {{ tailscale_ip_before.stdout | default('') }}"
+          - "Tailscale status: {{ tailscale_self_before.stdout_lines | default([]) }}"
+          - "Docker swarm: {{ docker_swarm_before.stdout_lines | default([]) }}"
+
+    - name: "DNS: Disable Tailscale DNS management"
+      command: tailscale set --accept-dns=false
+      when: disable_tailscale_dns | bool
+      register: tailscale_dns_pref
+      changed_when: "'Success' in (tailscale_dns_pref.stdout | default('')) or tailscale_dns_pref.rc == 0"
+      failed_when: false
+
+    - name: "DNS: Inspect resolv.conf"
+      shell: "cat /etc/resolv.conf 2>/dev/null || true"
+      register: resolv_conf
+      changed_when: false
+      when: disable_tailscale_dns | bool
+
+    - name: "DNS: Check Tailscale resolver backup"
+      stat:
+        path: /etc/resolv.pre-tailscale-backup.conf
+      register: resolv_backup
+      when: disable_tailscale_dns | bool
+
+    - name: "DNS: Restore pre-Tailscale resolver backup"
+      copy:
+        src: /etc/resolv.pre-tailscale-backup.conf
+        dest: /etc/resolv.conf
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      when:
+        - disable_tailscale_dns | bool
+        - "'100.100.100.100' in resolv_conf.stdout"
+        - resolv_backup.stat.exists
+
+    - name: "DNS: Fallback resolver if no backup exists"
+      copy:
+        dest: /etc/resolv.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          nameserver 1.1.1.1
+          nameserver 8.8.8.8
+      when:
+        - disable_tailscale_dns | bool
+        - "'100.100.100.100' in resolv_conf.stdout"
+        - not resolv_backup.stat.exists
+
+    - name: "DNS: Verify package DNS"
+      command: getent hosts pkgs.tailscale.com
+      register: dns_verify
+      changed_when: false
+      when: disable_tailscale_dns | bool
+
+    - name: "UPDATE: apt-get update"
+      apt:
+        update_cache: yes
+        lock_timeout: "{{ apt_lock_timeout }}"
+      when: update_tailscale | bool
+
+    - name: "UPDATE: upgrade tailscale package only"
+      apt:
+        name: tailscale
+        state: latest
+        only_upgrade: true
+        lock_timeout: "{{ apt_lock_timeout }}"
+      when: update_tailscale | bool
+
+    - name: "UPDATE: restart tailscaled"
+      service:
+        name: tailscaled
+        state: restarted
+        enabled: true
+      when: update_tailscale | bool
+
+    - name: "AUTH: require tailscale_authkey when auth_tailscale=true"
+      fail:
+        msg: "auth_tailscale=true requires -e tailscale_authkey=$TS_AUTH_KEY. Do not commit auth keys."
+      when:
+        - auth_tailscale | bool
+        - tailscale_authkey is not defined or tailscale_authkey | length == 0
+
+    - name: "AUTH: login with auth key"
+      command: "tailscale up --auth-key={{ tailscale_authkey }} --accept-dns=false"
+      no_log: true
+      when: auth_tailscale | bool
+
+    - name: "VERIFY: Tailscale version after actions"
+      shell: "tailscale version 2>/dev/null | head -n1 || true"
+      register: tailscale_version_after
+      changed_when: false
+
+    - name: "VERIFY: Tailscale IPv4 after actions"
+      shell: "tailscale ip -4 2>/dev/null || true"
+      register: tailscale_ip_after
+      changed_when: false
+
+    - name: "VERIFY: Tailscale status after actions"
+      shell: "tailscale status --self 2>/dev/null || true"
+      register: tailscale_self_after
+      changed_when: false
+
+    - name: "VERIFY: Tailscale backend state after actions"
+      shell: "tailscale status --json 2>/dev/null | sed -n 's/.*\"BackendState\": \"\\([^\"]*\\)\".*/\\1/p' | head -n1"
+      register: tailscale_backend_after
+      changed_when: false
+
+    - name: "AUTH: start browser login when requested"
+      shell: "timeout {{ tailscale_up_timeout_seconds | int }}s tailscale up --accept-dns=false 2>&1 || true"
+      register: tailscale_up_browser
+      changed_when: false
+      when:
+        - start_browser_login | bool
+        - tailscale_backend_after.stdout != "Running"
+
+    - name: "VERIFY: Tailscale auth URL when login still needed"
+      shell: |
+        status_url=$(tailscale status --json 2>/dev/null | sed -n 's/.*"AuthURL": "\([^"]*\)".*/\1/p' | head -n1)
+        up_url=$(printf '%s\n' '{{ tailscale_up_browser.stdout | default("") }}' | sed -n 's/.*\(https:\/\/login.tailscale.com\/a\/[A-Za-z0-9]*\).*/\1/p' | head -n1)
+        printf '%s\n' "${status_url:-$up_url}"
+      register: tailscale_auth_url
+      changed_when: false
+      when: tailscale_backend_after.stdout != "Running" or tailscale_ip_after.stdout == ""
+
+    - name: "AUTH: show browser login gate"
+      debug:
+        msg:
+          - "ACTION REQUIRED: authenticate {{ inventory_hostname }} in Tailscale before swarm recovery continues."
+          - "Open this URL, approve the node, then wait for the playbook to poll for a Tailscale IP."
+          - "{{ tailscale_auth_url.stdout | default('No login URL found; run tailscale status --json manually.') }}"
+      when:
+        - wait_for_tailscale_login | bool
+        - tailscale_backend_after.stdout != "Running" or tailscale_ip_after.stdout == ""
+
+    - name: "AUTH: wait for browser login to produce Tailscale IPv4"
+      shell: |
+        backend=$(tailscale status --json 2>/dev/null | sed -n 's/.*"BackendState": "\([^"]*\)".*/\1/p' | head -n1)
+        ip=$(tailscale ip -4 2>/dev/null || true)
+        if [ "$backend" = "Running" ] && [ -n "$ip" ]; then
+          printf '%s\n' "$ip"
+        fi
+      register: tailscale_login_wait_ip
+      changed_when: false
+      until: tailscale_login_wait_ip.stdout != ""
+      retries: "{{ ((tailscale_login_wait_seconds | int) / (tailscale_login_poll_seconds | int)) | round(0, 'ceil') | int }}"
+      delay: "{{ tailscale_login_poll_seconds | int }}"
+      when:
+        - wait_for_tailscale_login | bool
+        - tailscale_backend_after.stdout != "Running" or tailscale_ip_after.stdout == ""
+
+    - name: "AUTH: refresh Tailscale IPv4 after browser login"
+      set_fact:
+        tailscale_ip_effective: "{{ tailscale_login_wait_ip.stdout if (wait_for_tailscale_login | bool and tailscale_login_wait_ip is defined and tailscale_login_wait_ip.stdout | default('') != '') else tailscale_ip_after.stdout }}"
+
+    - name: "LOG: Tailscale result"
+      debug:
+        msg:
+          - "Host: {{ inventory_hostname }}"
+          - "Version before: {{ tailscale_version_before.stdout | default('unknown') }}"
+          - "Version after: {{ tailscale_version_after.stdout | default('unknown') }}"
+          - "Backend after: {{ tailscale_backend_after.stdout | default('unknown') }}"
+          - "Tailscale IP after: {{ tailscale_ip_effective | default(tailscale_ip_after.stdout) | default('') }}"
+          - "Tailscale status after: {{ tailscale_self_after.stdout_lines | default([]) }}"
+          - "Login URL if needed: {{ tailscale_auth_url.stdout | default('') }}"
+
+    - name: "SWARM: get worker join token from manager"
+      command: docker swarm join-token -q worker
+      register: worker_join_token
+      delegate_to: "{{ groups['swarm_managers'][0] }}"
+      run_once: true
+      changed_when: false
+      when: rejoin_swarm_workers | bool
+
+    - name: "SWARM: verify manager Tailscale listener"
+      wait_for:
+        host: "{{ manager_tailscale_ip }}"
+        port: 2377
+        timeout: 10
+      delegate_to: "{{ inventory_hostname }}"
+      when:
+        - rejoin_swarm_workers | bool
+        - "'swarm_workers' in group_names"
+
+    - name: "SWARM: require worker Tailscale IP"
+      fail:
+        msg: "No Tailscale IPv4 for {{ inventory_hostname }}; refusing to rejoin swarm."
+      when:
+        - rejoin_swarm_workers | bool
+        - "'swarm_workers' in group_names"
+        - tailscale_backend_after.stdout != "Running" or (tailscale_ip_effective | default(tailscale_ip_after.stdout)) == ""
+
+    - name: "SWARM: leave stale swarm on worker only"
+      command: docker swarm leave --force
+      ignore_errors: true
+      when:
+        - rejoin_swarm_workers | bool
+        - "'swarm_workers' in group_names"
+
+    - name: "SWARM: join worker to current manager"
+      command: "docker swarm join --token {{ worker_join_token.stdout }} --advertise-addr {{ tailscale_ip_effective | default(tailscale_ip_after.stdout) }} {{ manager_tailscale_ip }}:2377"
+      when:
+        - rejoin_swarm_workers | bool
+        - "'swarm_workers' in group_names"

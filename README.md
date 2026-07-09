@@ -8,6 +8,7 @@ General operations:
 
 * [Remote Docker environment](remote-docker-env.md)
 * [Production recovery: 2026-07-09](docs/production-recovery-2026-07-09.md)
+* [Tailscale swarm recovery](docs/tailscale-swarm-recovery.md)
 * [Agent/operator guide](AGENTS.md)
 * [Ansible command index](ANSIBLE_COMMANDS.md)
 * [VPS hardening guide](VPS_HARDENING_GUIDE.md)
@@ -21,6 +22,7 @@ App-specific docs:
 Infrastructure:
 
 * [Swarm setup and repair commands](prod-docker/setup-swarm/COMMANDS.md)
+* [Tailscale recovery playbook](prod-docker/setup-swarm/tailscale-recovery.yml)
 * [Swarm inventory](prod-docker/setup-swarm/inventory.ini)
 * [Dokploy bootstrap script](prod-docker/setup-swarm/dokploy.sh)
 * [VPS management commands](my-vps-management/COMMANDS.md)
@@ -77,6 +79,7 @@ done
 | :--- | :--- |
 | Current remote Docker/Dokploy layout | [remote-docker-env.md](remote-docker-env.md) |
 | Exact failed-env recovery commands from 2026-07-09 | [docs/production-recovery-2026-07-09.md](docs/production-recovery-2026-07-09.md) |
+| Restore Tailscale and worker swarm capacity | [docs/tailscale-swarm-recovery.md](docs/tailscale-swarm-recovery.md) |
 | CoreEx wildcard routing and service details | [docs/coreex-app.md](docs/coreex-app.md) |
 | Swarm repair playbook options and warnings | [prod-docker/setup-swarm/COMMANDS.md](prod-docker/setup-swarm/COMMANDS.md) |
 | Host inventory | [prod-docker/setup-swarm/inventory.ini](prod-docker/setup-swarm/inventory.ini) |

@@ -5,12 +5,35 @@ set -u
 # Usage:
 #   ./scripts/infra/debug-ssh-manager.sh
 #   ./scripts/infra/debug-ssh-manager.sh coreex-app
+#   ./scripts/infra/debug-ssh-manager.sh --wait-tailscale-login 300
 #   REMOTE_HOST=jbaba@107.175.69.159 ./scripts/infra/debug-ssh-manager.sh viralreel
 
 REMOTE_HOST="${REMOTE_HOST:-jbaba@107.175.69.159}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/ssdnode-2025}"
-SERVICE_PATTERN="${1:-coreex-app}"
+SERVICE_PATTERN="coreex-app"
+WAIT_TAILSCALE_LOGIN=false
+WAIT_TAILSCALE_SECONDS=300
 SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10)
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --wait-tailscale-login)
+      WAIT_TAILSCALE_LOGIN=true
+      if [ "${2:-}" != "" ] && [[ "${2:-}" =~ ^[0-9]+$ ]]; then
+        WAIT_TAILSCALE_SECONDS="$2"
+        shift
+      fi
+      ;;
+    --help|-h)
+      sed -n '1,16p' "$0"
+      exit 0
+      ;;
+    *)
+      SERVICE_PATTERN="$1"
+      ;;
+  esac
+  shift
+done
 
 if [ -f "$SSH_KEY" ]; then
   SSH_OPTS+=(-i "$SSH_KEY")
@@ -57,6 +80,37 @@ remote "sudo docker volume ls --format 'table {{.Name}}\t{{.Driver}}' 2>&1 | egr
 
 section "Tailscale status"
 remote "systemctl is-active tailscaled 2>/dev/null || true; tailscale status --self 2>/dev/null || true; tailscale ip -4 2>/dev/null || true"
+
+if [ "$WAIT_TAILSCALE_LOGIN" = true ]; then
+  section "Tailscale browser login wait"
+  backend="$(remote "tailscale status --json 2>/dev/null | sed -n 's/.*\"BackendState\": \"\\([^\"]*\\)\".*/\\1/p' | head -n1" | tr -d '\r')"
+  auth_url="$(remote "tailscale status --json 2>/dev/null | sed -n 's/.*\"AuthURL\": \"\\([^\"]*\\)\".*/\\1/p' | head -n1" | tr -d '\r')"
+  current_ip="$(remote "tailscale ip -4 2>/dev/null || true" | tr -d '\r')"
+  if [ "$backend" = "Running" ] && [ -n "$current_ip" ]; then
+    echo "Tailscale already has IPv4: $current_ip"
+  else
+    if [ -z "$auth_url" ]; then
+      auth_url="$(remote "sudo tailscale up --accept-dns=false 2>&1 || true" | sed -n 's/.*\\(https:\\/\\/login.tailscale.com\\/a\\/[A-Za-z0-9]*\\).*/\\1/p' | head -n1 | tr -d '\r')"
+    fi
+    echo "ACTION REQUIRED: authenticate this node in Tailscale."
+    echo "Open: ${auth_url:-'(no auth URL found; run tailscale status --json on the host)'}"
+    echo "Polling for up to ${WAIT_TAILSCALE_SECONDS}s..."
+    end_time=$((SECONDS + WAIT_TAILSCALE_SECONDS))
+    while [ "$SECONDS" -lt "$end_time" ]; do
+      backend="$(remote "tailscale status --json 2>/dev/null | sed -n 's/.*\"BackendState\": \"\\([^\"]*\\)\".*/\\1/p' | head -n1" | tr -d '\r')"
+      current_ip="$(remote "tailscale ip -4 2>/dev/null || true" | tr -d '\r')"
+      if [ "$backend" = "Running" ] && [ -n "$current_ip" ]; then
+        echo "Tailscale login detected. IPv4: $current_ip"
+        break
+      fi
+      sleep 5
+    done
+    if [ "$backend" != "Running" ] || [ -z "$current_ip" ]; then
+      echo "Timed out waiting for Tailscale login."
+      exit 2
+    fi
+  fi
+fi
 
 section "Matching services"
 services="$(remote "sudo docker service ls --format '{{.Name}}' 2>/dev/null | grep '$SERVICE_PATTERN' || true" | tr -d '\r')"

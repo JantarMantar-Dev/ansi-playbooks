@@ -199,19 +199,22 @@ Safe first moves:
 Detailed incident documentation:
 
 * [docs/production-recovery-2026-07-09.md](docs/production-recovery-2026-07-09.md) - exact commands used to bring the failed environment back up.
+* [docs/tailscale-swarm-recovery.md](docs/tailscale-swarm-recovery.md) - Tailscale login/update and worker capacity restoration.
 * [docs/coreex-app.md](docs/coreex-app.md) - CoreEx-specific image, routing, wildcard subdomain, and debugging notes.
 * [prod-docker/setup-swarm/COMMANDS.md](prod-docker/setup-swarm/COMMANDS.md) - swarm playbook reference. Read the destructive warnings before use.
 
-## Durable Follow-Up From 2026-07-09
+## Tailscale And Capacity State From 2026-07-09
 
-The 2026-07-09 recovery restored public availability by scheduling app services on the manager. It did not fully repair worker capacity.
+The 2026-07-09 recovery first restored public availability by scheduling app services on the manager, then restored Tailscale and worker capacity.
 
-Remaining infrastructure work:
+Final verified state:
 
-1. Re-authenticate Tailscale on the manager and logged-out workers.
-2. Confirm each node has a Tailscale IPv4.
-3. Rejoin workers only, never the manager, unless intentionally rebuilding swarm state.
-4. After workers are `Ready`, decide whether to restore `node.role==worker` placement constraints.
+1. Production manager and all seven production workers were logged back into Tailscale.
+2. `docker node ls` showed all eight production nodes as `Ready`.
+3. The separate RackNerd test swarm nodes in `prod-docker/setup-swarm/testinventory.ini` were also logged back into Tailscale and showed `Ready`.
+4. Stateless app services were moved off the manager and constrained to the `app_runtime=true` RackNerd workers.
+5. `viralreel-db-vwkfbt`, `dokploy`, `dokploy-postgres`, and `dokploy-redis` stayed manager-pinned.
+6. `racknerd-66b5b59` is Tailscale/Swarm `Ready` but is excluded from app placement because image pull failed with `No space left on device`; direct SSH showed `/dev/vda2` at `19G/19G`, `100%` full. Cleanup needs explicit approval.
 
 Check Tailscale:
 
@@ -231,10 +234,15 @@ sudo docker swarm leave --force
 sudo docker swarm join --token <worker-token> --advertise-addr <worker-tailscale-ip> 100.73.236.49:2377
 ```
 
-Restore worker placement only after enough workers are healthy:
+Current app placement guard:
 
 ```bash
+docker node inspect racknerd-dd44635 --format '{{json .Spec.Labels}}'
+docker node inspect racknerd-fb9a7f4 --format '{{json .Spec.Labels}}'
+
 for s in buildinpublic-app-b37nff coreex-app-70cz87 jbaba-blog-hq29mq serivcehq-web-wpqe73 viralreel-appapi-rad4ao viralreel-appclient-vopczf viralreel-lending-erhdij; do
-  sudo docker service update --constraint-add node.role==worker "$s"
+  sudo docker service inspect "$s" --format '{{json .Spec.TaskTemplate.Placement.Constraints}}'
 done
 ```
+
+Expected app constraints include `node.role==worker`, `node.labels.app_runtime==true`, and `node.hostname != racknerd-66b5b59`.

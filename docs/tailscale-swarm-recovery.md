@@ -337,6 +337,8 @@ In the 2026-07-09 recovery, plain `node.role==worker` briefly placed some app ta
 
 The intended steady state is still `node.role==worker` for every stateless app. Before returning to it, validate every worker's Tailscale state, disk capacity, private-image access, and manager-side overlay canary. If a worker fails a gate, set that node to `Drain`; do not add `app_runtime` to new apps or make it a permanent cluster tier. The complete procedure, including safe removal of the temporary constraints, is in [swarm-post-recovery-validation.md](swarm-post-recovery-validation.md).
 
+Follow-up result: the later repeated public `502` proved that several workers still had stale overlay membership even though they were `Ready`. Each affected worker was safely rejoined to the existing manager with `--advertise-addr <tailscale-ip>`, then passed a `dokploy-network` VIP canary before returning to `Active`. This worker-only rejoin is the documented repair when the post-restart gate detects a broken overlay path; never apply it to the manager.
+
 Keep `viralreel-db-vwkfbt`, `dokploy`, `dokploy-postgres`, and `dokploy-redis` manager-pinned. Do not move database services during app rebalance.
 
 Force a controlled task refresh only after constraints are correct and public curls are healthy:

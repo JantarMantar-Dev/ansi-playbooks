@@ -61,9 +61,9 @@ The normal cluster design is manager/worker: stateful Dokploy/data services stay
 
 When a worker is unhealthy, drain that node rather than narrowing every app's placement. Return it to `Active` only after the post-recovery Tailscale, disk/image, overlay-canary, and public-route gates pass. Follow [docs/swarm-post-recovery-validation.md](docs/swarm-post-recovery-validation.md) before removing the temporary legacy label constraints currently present on public apps.
 
-Current durable containment: the four SSD workers and `racknerd-66b5b59` are `Drain`. Keep them drained through Dokploy auto-deploys until they pass the validation gate. Node `Drain` is the persistent scheduler guard; manually added service constraints are overwritten by Dokploy deployments.
+Current verified state: one manager and all seven production workers are `Ready Active`. The four SSD workers required worker-only rejoin with their Tailscale advertise addresses to repair stale overlay membership. `racknerd-66b5b59` required removal of unused images and exited no-volume containers before it could rejoin. All five repaired workers passed the manager-side overlay VIP canary.
 
-`racknerd-66b5b59` previously hit `No space left on device` during image pull and later could not create Ansible temp dirs. Do not run Docker prune or delete data there without explicit user approval; treat disk cleanup as a separate approved maintenance task.
+After **every** node restart, Tailscale/Docker/kernel/firewall upgrade, or worker rejoin, run the mandatory gate in [docs/swarm-post-recovery-validation.md](docs/swarm-post-recovery-validation.md): confirm the expected 1-manager/7-worker count, correct Docker `Node Address`, overlay VIP canary, and public routes. `Ready` alone is insufficient.
 
 ## Tailscale Browser Login Approval
 

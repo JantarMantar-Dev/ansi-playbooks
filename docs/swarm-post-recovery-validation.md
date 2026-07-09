@@ -37,7 +37,7 @@ The intended persistent Dokploy configuration for the public applications is onl
 
 Do not edit Dokploy's database to change that baseline. Node availability is part of the Swarm scheduler state, not an application service override. A worker set to `Drain` remains ineligible for new tasks after a Dokploy build/deploy, so automatic deployments continue to use only the workers that have passed validation.
 
-On 2026-07-09, an automatic blog deploy demonstrated this behavior: Dokploy removed manually added `app_runtime` constraints, scheduled the blog on an SSD worker, and the public route returned `502`. The durable containment was to drain the four unvalidated SSD workers and the full-disk `racknerd-66b5b59` worker. The blog then rescheduled to an active RackNerd worker with its normal `node.role==worker` specification and returned `200`.
+On 2026-07-09, an automatic blog deploy demonstrated this behavior: Dokploy removed manually added `app_runtime` constraints, scheduled the blog on an SSD worker, and the public route returned `502`. The durable containment was to drain the four unvalidated SSD workers and the full-disk `racknerd-66b5b59` worker. The permanent repair rejoined each worker to the existing manager with its Tailscale advertise address, verified an overlay VIP canary, removed stale node records, and then returned every validated worker to `Active`. The blog then ran with its normal `node.role==worker` specification and returned `200`.
 
 ## Why This Exists
 
@@ -48,6 +48,44 @@ During the 2026-07-09 recovery, some services scheduled on SSD workers were loca
 ## Recovery Completion Gate
 
 Do not restore normal app placement merely because all nodes are `Ready`. Complete every gate below first.
+
+## Mandatory Gate After Any Node Restart or Upgrade
+
+Run this gate after a Docker, Tailscale, kernel, firewall, or OS upgrade; after a node restart; and after any worker rejoin. It is also required before calling a Dokploy upgrade complete.
+
+The production topology is exactly **eight nodes**: one manager (`racknerd-fb2892c`) and seven workers. The two hosts in `testinventory.ini` are a separate test swarm and do not count toward this gate.
+
+1. From the manager, confirm exactly one leader and seven `Ready Active` workers:
+
+   ```bash
+   ssh -i ~/.ssh/ssdnode-2025 jbaba@107.175.69.159 'sudo docker node ls'
+   ```
+
+2. On the restarted/upgraded worker, confirm Docker advertises its current Tailscale address—not `172.17.0.1`, a public IP, or a stale address:
+
+   ```bash
+   tailscale ip -4
+   docker info | egrep 'Swarm:|NodeID:|Node Address:|Manager Addresses:'
+   ```
+
+3. Run the overlay canary in this document against that worker. It must return HTTP `200` through the `dokploy-network` service VIP.
+
+4. If the canary fails, immediately set the node to `Drain`, then rejoin that **worker only** to the existing manager using its Tailscale address:
+
+   ```bash
+   # Manager: keep the token private.
+   sudo docker swarm join-token -q worker
+
+   # Worker only: never run this on the manager.
+   sudo docker swarm leave --force
+   sudo docker swarm join --token <worker-token> \
+     --advertise-addr <worker-tailscale-ip> \
+     100.73.236.49:2377
+   ```
+
+   Remove the old `Down` node record only after the replacement node is `Ready` and passes the canary. Do not reinitialize or force-leave the manager.
+
+5. Return the worker to `Active` only after all prior checks pass, then run the public-route matrix.
 
 ### 1. Control Plane and Tailscale
 
@@ -103,10 +141,12 @@ sudo docker service create --detach=true \
   --constraint "node.hostname==$NODE" \
   nginx:alpine
 
-# Wait until the task is Running, then request it from dokploy-network.
+# Wait until the task is Running, obtain its service VIP, then request it from dokploy-network.
 sudo docker service ps --no-trunc "$CANARY"
+vip=$(sudo docker service inspect "$CANARY" \
+  --format '{{range .Endpoint.VirtualIPs}}{{.Addr}}{{end}}' | cut -d/ -f1)
 sudo docker run --rm --network dokploy-network curlimages/curl:8.12.1 \
-  -fsS --max-time 15 "http://$CANARY/" >/dev/null
+  -fsS --max-time 15 "http://$vip/" >/dev/null
 
 # Always remove the disposable service after the result is captured.
 sudo docker service rm "$CANARY"

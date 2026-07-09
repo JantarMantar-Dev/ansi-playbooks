@@ -22,7 +22,7 @@ The 2026-07-09 incident had this exact profile:
 * Swarm placed it on an SSD worker that was not a peer of the manager's `dokploy-network` overlay.
 * Other apps constrained to the approved RackNerd runtime workers continued to return `200`.
 
-The immediate correction was to restore the approved app-runtime placement constraints. This is a placement/overlay reachability failure, not evidence that the Dokploy upgrade, TLS certificate, or application image is automatically at fault.
+The initial containment used temporary app-runtime placement constraints. The permanent repair rejoined each affected worker with its Tailscale advertise address and verified an overlay VIP canary before returning it to `Active`. This is a placement/overlay reachability failure, not evidence that the Dokploy upgrade, TLS certificate, or application image is automatically at fault.
 
 ## Safety
 

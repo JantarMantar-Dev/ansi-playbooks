@@ -1,34 +1,90 @@
 ---
-- name: Setup Docker Prune Cron Job
-  hosts: racknerd-bd2de99
+# Safe recurring maintenance. Run with prod-docker/setup-swarm/inventory.ini.
+- name: Install safe Docker and journal cleanup schedule
+  hosts: all
   become: true
+  vars:
+    cleanup_script: /usr/local/sbin/docker-safe-cleanup
+    cleanup_lock: /var/lock/docker-safe-cleanup.lock
   tasks:
-    - name: Check if Docker system prune cron job exists
-      ansible.builtin.shell: crontab -l | grep -q "Docker system prune every 3 hours"
-      register: system_prune_check
+    - name: Detect legacy cron support
+      ansible.builtin.command: sh -c 'command -v crontab'
+      register: crontab_binary
       failed_when: false
       changed_when: false
 
-    - name: Ensure Docker system prune -a --volumes runs every 3 hours
+    - name: Remove legacy destructive Docker prune schedules
       ansible.builtin.cron:
-        name: "Docker system prune every 3 hours"
-        minute: "0"
-        hour: "*/3"
-        job: "/usr/bin/docker system prune -a --volumes -f"
+        name: "{{ item }}"
         user: root
-      when: system_prune_check.rc != 0
+        state: absent
+      loop:
+        - "Docker system prune every 3 hours"
+        - "Docker builder prune every 3 hours"
+      when: crontab_binary.rc == 0
 
-    - name: Check if Docker builder prune cron job exists
-      ansible.builtin.shell: crontab -l | grep -q "Docker builder prune every 3 hours"
-      register: builder_prune_check
-      failed_when: false
+    - name: Install safe Docker cleanup script
+      ansible.builtin.copy:
+        dest: "{{ cleanup_script }}"
+        owner: root
+        group: root
+        mode: "0750"
+        content: |
+          #!/usr/bin/env bash
+          # Managed by Ansible. Never prune volumes or networks here.
+          set -euo pipefail
+          exec 9>{{ cleanup_lock }}
+          flock -n 9 || exit 0
+          echo "=== $(date -Is) docker-safe-cleanup start ==="
+          df -h /
+          /usr/bin/docker container prune -f
+          /usr/bin/docker image prune -a -f
+          /usr/bin/docker builder prune -a -f --filter until=168h
+          /usr/bin/journalctl --vacuum-time=14d
+          /usr/bin/docker system df
+          df -h /
+          echo "=== $(date -Is) docker-safe-cleanup complete ==="
+
+    - name: Install systemd cleanup service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/docker-safe-cleanup.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Safe Docker and journal cleanup
+
+          [Service]
+          Type=oneshot
+          ExecStart={{ cleanup_script }}
+
+    - name: Install weekly cleanup timer
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/docker-safe-cleanup.timer
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Weekly safe Docker and journal cleanup
+
+          [Timer]
+          OnCalendar=Sun *-*-* 03:17:00
+          RandomizedDelaySec=45m
+          Persistent=true
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Enable weekly cleanup timer
+      ansible.builtin.systemd:
+        name: docker-safe-cleanup.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Verify cleanup timer is active
+      ansible.builtin.command: systemctl is-active docker-safe-cleanup.timer
+      register: cleanup_timer
       changed_when: false
 
-    - name: Ensure Docker builder prune -a runs every 3 hours
-      ansible.builtin.cron:
-        name: "Docker builder prune every 3 hours"
-        minute: "5"
-        hour: "*/3"
-        job: "/usr/bin/docker builder prune -a -f"
-        user: root
-      when: builder_prune_check.rc != 0
+    - name: Assert cleanup timer is active
+      ansible.builtin.assert:
+        that: cleanup_timer.stdout == 'active'

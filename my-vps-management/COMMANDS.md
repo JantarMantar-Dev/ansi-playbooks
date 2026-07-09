@@ -18,27 +18,15 @@ ansible-playbook -i inventory.ini create_directories.yml -e '{"dirs": ["/path/on
 ansible-playbook -i inventory.ini create_directories.yml --check
 ```
 
-# Docker Prune Cron Job
+# Safe Docker Cleanup Schedule
 
-This playbook sets up a recurring cron job to clean up Docker system and builder state every 3 hours. It is configured to run specifically on the `racknerd-bd2de99` host.
+Apply the recipe to every production node:
 
-## Purpose
-- Reclaims disk space by removing unused Docker data.
-- Prunes all unused images, containers, networks, and volumes (`docker system prune -a --volumes`).
-- Clears the Docker build cache (`docker builder prune -a`).
-- Maintains system hygiene automatically without manual intervention.
-
-## Run Playbook
 ```bash
-ansible-playbook -i inventory.ini docker_prune_cron.yml
+ansible-playbook -i ../prod-docker/setup-swarm/inventory.ini docker_prune_cron.yml
 ```
 
-## Details
-- **Schedule**: Every 3 hours.
-- **System Prune**: Runs at minute 0.
-- **Builder Prune**: Runs at minute 5.
-- **User**: root
-- **Idempotency**: The playbook explicitly checks for the existence of the cron jobs by searching the crontab (`crontab -l | grep`) before attempting to set them. This ensures they are only configured if not already present.
+It installs a weekly systemd timer at 03:17 on Sunday, with jitter to avoid a fleet-wide prune at once. It removes only stopped containers, images unused by every container, builder cache older than seven days, and journal entries older than fourteen days. It never prunes volumes or networks. See [recurring node maintenance](../docs/recurring-node-maintenance.md) for the policy and verification command.
 
 # Port Management & Hardening
 

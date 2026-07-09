@@ -65,6 +65,10 @@ Current verified state: one manager and all seven production workers are `Ready 
 
 After **every** node restart, Tailscale/Docker/kernel/firewall upgrade, or worker rejoin, run the mandatory gate in [docs/swarm-post-recovery-validation.md](docs/swarm-post-recovery-validation.md): confirm the expected 1-manager/7-worker count, correct Docker `Node Address`, overlay VIP canary, and public routes. `Ready` alone is insufficient.
 
+## Recurring Disk Maintenance
+
+Use [my-vps-management/docker_prune_cron.yml](my-vps-management/docker_prune_cron.yml) with the production inventory to schedule the safe weekly cleanup on every node. It may prune stopped containers, unused images, old builder cache, and aged journal logs only. Never add `--volumes`, volume deletion, or network pruning to scheduled maintenance. See [docs/recurring-node-maintenance.md](docs/recurring-node-maintenance.md).
+
 ## Tailscale Browser Login Approval
 
 When a node needs browser login, stop and ask the user to authenticate the printed Tailscale URL. The agent may poll after asking, but must not pretend the login step is automatic.
